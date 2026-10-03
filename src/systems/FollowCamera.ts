@@ -9,7 +9,7 @@ export const CAR_CAM: FollowParams = { distance: 9, height: 4.2, lookHeight: 1.4
 // Nanning's whole subject is the street: the arcade overhead, the lantern
 // garlands, the shopfronts. A 5 m chase cam frames the player's shoulders and
 // none of that, so on foot the camera sits back far enough to read the block.
-export const FOOT_CAM: FollowParams = { distance: 8.6, height: 4.4, lookHeight: 2.0, stiffness: 7 };
+export const FOOT_CAM: FollowParams = { distance: 7.2, height: 3.5, lookHeight: 1.9, stiffness: 7 };
 
 /**
  * Smoothed chase camera. The desired pose sits behind the target along its
@@ -41,15 +41,15 @@ export class FollowCamera {
    * behind the *heading*; the look-at leads along the *velocity vector* `(vx, vz)` so the
    * car stays centred even when travel diverges from heading (powerslides).
    */
-  update(x: number, z: number, heading: number, p: FollowParams, dt: number, vx = 0, vz = 0): void {
+  update(x: number, z: number, heading: number, p: FollowParams, dt: number, vx = 0, vz = 0, y = 0): void {
     // Snap on the first frame. Damping in from an arbitrary initial pose takes
     // tens of seconds to converge, and during that time the player is looking at
     // whatever the sky is doing.
     if (!this.snapped) {
       this.snapped = true;
       this.clear = 1;
-      this.camera.position.set(x - Math.cos(heading) * p.distance, p.height, z + Math.sin(heading) * p.distance);
-      this.look.set(x, p.lookHeight, z);
+      this.camera.position.set(x - Math.cos(heading) * p.distance, p.height + y, z + Math.sin(heading) * p.distance);
+      this.look.set(x, p.lookHeight + y, z);
       this.camera.lookAt(this.look);
       return;
     }
@@ -70,7 +70,7 @@ export class FollowCamera {
     const k = this.clear;
 
     this.camera.position.x = damp(this.camera.position.x, x + (desiredX - x) * k, p.stiffness, dt);
-    this.camera.position.y = damp(this.camera.position.y, p.height * (0.45 + 0.55 * k), p.stiffness, dt);
+    this.camera.position.y = damp(this.camera.position.y, p.height * (0.45 + 0.55 * k) + y, p.stiffness, dt);
     this.camera.position.z = damp(this.camera.position.z, z + (desiredZ - z) * k, p.stiffness, dt);
 
     // Decompose velocity into forward (along heading) + lateral (perpendicular). Lead the
@@ -84,7 +84,7 @@ export class FollowCamera {
     const leadX = fx * lead.forward + rx * lead.lateral;
     const leadZ = fz * lead.forward + rz * lead.lateral;
     this.look.x = damp(this.look.x, x + leadX, p.stiffness, dt);
-    this.look.y = damp(this.look.y, p.lookHeight, p.stiffness, dt);
+    this.look.y = damp(this.look.y, p.lookHeight + y, p.stiffness, dt);
     this.look.z = damp(this.look.z, z + leadZ, p.stiffness, dt);
     this.camera.lookAt(this.look);
   }

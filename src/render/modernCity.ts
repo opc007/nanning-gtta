@@ -130,6 +130,38 @@ export function buildModernDistrict(
   });
   const mzGeo: THREE.BufferGeometry[] = [];
 
+
+  /**
+   * Put a box on a facade. `a` is the offset ALONG the frontage (so the caller
+   * never has to work out the X/Z rotation), `proj` is how far it stands proud
+   * of the wall, and `wide` means it spans the whole frontage (ignoring `a`).
+   */
+  const place = (
+    b: Bucket,
+    isEW: boolean,
+    w: number, h: number, d: number,
+    fx: number, fy: number, fz: number,
+    a: number,
+    proj: number,
+    yaw: number,
+    wide = false,
+  ): void => {
+    const g = new THREE.BoxGeometry(
+      isEW ? d : wide ? w : w,
+      h,
+      isEW ? wide ? w : w : d,
+    );
+    scaleBoxUv(g, w, h, d, 0.5);
+    if (isEW) g.rotateY(Math.PI / 2);
+    g.translate(fx + faceNXAt(yaw) * proj, fy, fz + faceNZAt(yaw) * proj);
+    if (isEW) g.translate(0, 0, a);
+    else g.translate(a, 0, 0);
+    b.parts.push(g);
+  };
+  // Facing unit normals for a yaw, matching faceYaw()'s convention.
+  const faceNXAt = (yaw: number): number => (yaw === 0 ? 0 : yaw === Math.PI ? 0 : yaw > 0 ? 1 : -1);
+  const faceNZAt = (yaw: number): number => (yaw === 0 ? 1 : yaw === Math.PI ? -1 : 0);
+
   /** A quad already oriented to face `yaw`, pushed into a merge bucket. */
   const quad = (
     into: THREE.BufferGeometry[],
@@ -146,7 +178,9 @@ export function buildModernDistrict(
     isEW ? (sign > 0 ? Math.PI / 2 : -Math.PI / 2) : sign > 0 ? 0 : Math.PI;
 
   const STEEL = 0x1e2126;
-  const ACCENTS = [0xd8a017, 0xa83b3b, 0x2f4f7a, 0x1f7a4d, 0x6a3a8a];
+  // A restrained palette. Six saturated accents scattered over a facade reads as
+  // confetti; three, assigned per building, reads as a building with a colour.
+  const ACCENTS = [0xd8d2c4, 0xc9a227, 0x9c3a34, 0x44586b, 0x4d6b57, 0x6b4a6e];
 
   for (let i = 0; i < buildings.length; i++) {
     const b = buildings[i];
@@ -171,7 +205,10 @@ export function buildModernDistrict(
     const bFacade = bucket(style === 'plaster' ? 'plaster' : style === 'redBrick' ? 'redBrick' : 'concrete', facadeCol, 0, sd);
     const bSteel = bucket('steel', STEEL, 0.6, 3);
     const bStone = bucket('concrete', 0x8e8a80, 0, 9, 0.7);
-    const accent = ACCENTS[Math.floor(rnd() * ACCENTS.length)];
+    // Most buildings are off-white; a few carry a colour. Every building being a
+    // different hue is what made the street look like a paint chart.
+    const accentRoll = rnd();
+    const accent = accentRoll < 0.55 ? 0xd8d2c4 : ACCENTS[Math.floor(rnd() * ACCENTS.length)];
     const bAccent = bucket('plaster', accent, 0, 4);
 
     const fx = cx + faceNX * out; // the street-facing face centre
@@ -208,47 +245,61 @@ export function buildModernDistrict(
       bSteel.parts.push(m);
     }
 
-    // ── Upper floors: window bands + pilasters + floor lines ──────────────
+    // ── Upper floors: real window openings ─────────────────────────────────
+    // A window drawn as a coloured rectangle on a flat wall is a sticker. What
+    // makes it a window is RELIEF: a reveal set back into the facade, a sill
+    // that projects and throws a shadow, a lintel over it, and mullions that
+    // stand proud. Four thin boxes per opening, and the wall stops being flat.
+    const REVEAL = 0.22; // how far the glass sits behind the facade plane
+    const SILL = 0.1; // how far the sill projects — just enough to cast a line
     for (let f = 0; f < floors; f++) {
-      const y0 = gH + 0.4 + f * 3.4;
-      if (y0 + 3.2 > H) break;
-      const bandH = 1.95;
-      const bandY = y0 + bandH / 2 + 0.35;
+      const y0 = gH + 0.45 + f * 3.4;
+      if (y0 + 3.0 > H) break;
+      const winH = 1.85;
+      const winY = y0 + winH / 2 + 0.3;
+      const bays = Math.max(2, Math.round(across / 2.6));
+      const pitch = (across - 1.2) / bays;
+      const winW = Math.min(1.65, pitch * 0.62);
 
-      // Horizontal window band, slightly recessed.
-      quad(bandGeo, across - 1.6, bandH, fx + faceNX * 0.03, bandY, fz + faceNZ * 0.03, glassYaw);
-
-      // Mullion grid inside the band.
-      const bays2 = Math.max(3, Math.floor((across - 1.6) / 1.25));
-      for (let k = 0; k <= bays2; k++) {
-        const a = -(across - 1.6) / 2 + ((across - 1.6) * k) / bays2;
-        const m = new THREE.BoxGeometry(0.07, bandH, 0.12);
-        if (isEW) {
-          m.rotateY(Math.PI / 2);
-          m.translate(fx + faceNX * 0.07, bandY, fz + a);
-        } else {
-          m.translate(fx + a, bandY, fz + faceNZ * 0.07);
+      for (let k = 0; k < bays; k++) {
+        const a = -(across - 1.2) / 2 + pitch * (k + 0.5);
+        // Where the opening sits, in world space.
+        const ox = fx + faceNX * (REVEAL * 0.5);
+        const oz = fz + faceNZ * (REVEAL * 0.5);
+        const yaw = glassYaw;
+        // Glass, set back into the reveal.
+        quad(
+          bandGeo,
+          winW, winH,
+          fx + faceNX * REVEAL + (isEW ? 0 : 0), winY, fz + faceNZ * REVEAL,
+          yaw,
+        );
+        void ox; void oz;
+        // Sill: projects, and is the piece that actually catches the sun.
+        place(bAccent, isEW, winW + 0.5, 0.14, 0.34, fx, winY - winH / 2 - 0.1, fz, a, SILL, yaw);
+        // Head trim: flush with the wall, not another shelf.
+        place(bAccent, isEW, winW + 0.3, 0.16, 0.16, fx, winY + winH / 2 + 0.08, fz, a, 0.05, yaw);
+        // Reveal jambs: two thin returns that make the opening read as a hole.
+        for (const sj of [-1, 1]) {
+          place(bFacade, isEW, 0.1, winH, 0.28, fx, winY, fz, a + sj * (winW / 2 + 0.04), REVEAL, yaw);
         }
-        bSteel.parts.push(m);
+        // Mullion, flush with the reveal.
+        place(bSteel, isEW, 0.06, winH - 0.05, 0.09, fx, winY, fz, a, 0.05, yaw);
       }
-      // Sill + lintel in the accent colour: this is what gives the facade rhythm.
-      slab(bAccent, isEW ? 0.22 : across, 0.18, isEW ? across : 0.22, fx + faceNX * 0.1, bandY - bandH / 2 - 0.12, fz + faceNZ * 0.1, 1.2);
-      slab(bAccent, isEW ? 0.22 : across, 0.24, isEW ? across : 0.22, fx + faceNX * 0.1, bandY + bandH / 2 + 0.15, fz + faceNZ * 0.1, 1.2);
 
+      // Floor line between storeys: a single thin band. Two of these stacked up
+      // the facade is most of what reads as "building" rather than "box".
+      place(bAccent, isEW, across, 0.2, 0.3, fx, y0 - 0.16, fz, 0, 0.16, glassYaw, true);
     }
 
-    // Pilasters: a black steel rhythm every ~4.5 m up the whole facade.
+    // Pilasters: steel columns standing proud of the wall, not painted on.
     const pil = Math.max(1, Math.floor(across / 4.5));
     for (let k = 0; k <= pil; k++) {
       const a = -across / 2 + (across * k) / pil;
-      const p = new THREE.BoxGeometry(0.32, H - 0.9, 0.32);
-      if (isEW) {
-        p.rotateY(Math.PI / 2);
-        p.translate(fx + faceNX * 0.12, 0.45 + (H - 0.9) / 2, fz + a);
-      } else {
-        p.translate(fx + a, 0.45 + (H - 0.9) / 2, fz + faceNZ * 0.12);
-      }
-      bSteel.parts.push(p);
+      place(bSteel, isEW, 0.3, H - 1.0, 0.26, fx, 0.5 + (H - 1.0) / 2, fz, a, 0.18, glassYaw, true);
+      // A capital and a base, so the column has a top and a bottom.
+      place(bAccent, isEW, 0.44, 0.14, 0.34, fx, H - 0.55, fz, a, 0.24, glassYaw, true);
+      place(bAccent, isEW, 0.42, 0.18, 0.32, fx, 0.66, fz, a, 0.22, glassYaw, true);
     }
 
     // ── Parapet + roof slab ──────────────────────────────────────────────

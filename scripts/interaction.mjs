@@ -682,7 +682,7 @@ try {
         ped.x = g.player.x + 1.3; ped.z = g.player.z;
       }
     });
-    await page.keyboard.press('Space'); // punch
+    await page.keyboard.press('KeyJ'); // punch (J; Space is jump)
     await page.waitForTimeout(120);
     gibbed = await page.evaluate(() => window.__game.peds.peds[0].state === 'gibbed');
   }

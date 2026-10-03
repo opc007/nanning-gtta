@@ -53,6 +53,7 @@ export class Controls {
     );
   }
 
+  /** Interact / enter-exit. E opens a shop; F (and E, if no shop takes it) mounts a car. */
   enterExitPressed(): boolean {
     const key = this.kb.wasPressed('KeyF') || this.kb.wasPressed('KeyE');
     const tap = this.touch?.consumeEnter() ?? false; // always consume, never short-circuit
@@ -66,11 +67,27 @@ export class Controls {
     return key || tap || this.pad.wasPressed(GP.Y);
   }
 
-  /** On-foot melee. Space (handbrake is driving-only, so it's free on foot). */
+  /**
+   * On-foot melee. J — F stays enter/exit, Space stays jump.
+   */
   punchPressed(): boolean {
-    const key = this.kb.wasPressed('Space');
+    const key = this.kb.wasPressed('KeyJ');
     const tap = this.touch?.consumePunch() ?? false;
     return key || tap || this.pad.wasPressed(GP.X);
+  }
+
+  /**
+   * Jump. Only meaningful on foot — driving Space is still the handbrake.
+   *
+   * Level-triggered on purpose. An edge trigger loses taps on any device slow
+   * enough that a frame outlasts the keypress: the down+up pair lands between
+   * two updates and the jump is silently swallowed. `isDown` is immune to that,
+   * and holding the key simply lets you bunny-hop, which is the behaviour you
+   * want anyway. `player.jump()` refuses while airborne, so there is no double
+   * jump and no air-jump.
+   */
+  jumpPressed(): boolean {
+    return this.kb.isDown('Space') || this.pad.wasPressed(GP.B) || this.pad.isDown(GP.B);
   }
 
   /** Radio tuner step this frame: +1 next station, -1 previous, 0 none. */
