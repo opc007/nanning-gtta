@@ -88,11 +88,17 @@ describe('中山路 layout', () => {
     expect(alley.x).toBeCloseTo(city.alley.cx, 1);
     expect(alley.z).toBeCloseTo(0, 1);
 
-    // A point inside a shop footprint is pushed out.
+    // The doorway and the room are open. The back wall is not.
     const shop = city.shops.find((s) => !s.nightOnly && s.nx !== 0)!;
-    const inlandX = shop.x - shop.nx * 3;
-    const blocked = city.grid.resolve(inlandX, shop.z, 0.3);
-    expect(Math.hypot(blocked.x - inlandX, blocked.z - shop.z)).toBeGreaterThan(0.2);
+    const insideX = shop.x - shop.nx * 3;
+    const inside = city.grid.resolve(insideX, shop.z, 0.3);
+    expect(inside.x).toBeCloseTo(insideX, 1);
+    expect(inside.z).toBeCloseTo(shop.z, 1);
+    const door = city.grid.resolve(shop.x, shop.z, 0.3);
+    expect(door.x).toBeCloseTo(shop.x, 1);
+    const backX = shop.x - shop.nx * (SHOP_DEPTH - 0.12);
+    const blocked = city.grid.resolve(backX, shop.z, 0.3);
+    expect(Math.hypot(blocked.x - backX, blocked.z - shop.z)).toBeGreaterThan(0.15);
   });
 
   it('has no AI lanes or parked cars on the street', () => {

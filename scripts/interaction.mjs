@@ -24,6 +24,18 @@ try {
     await page.goto(URL, { waitUntil: 'load' });
     await page.waitForTimeout(700);
     await page.evaluate(() => window.__skipSplash?.()); // skip the start splash (clean teardown)
+    // The food street starts on foot. Most scenarios below were written for a
+    // driving spawn, so mount the car at the player's feet before they run.
+    const mode = await page.evaluate(() => window.__game.mode);
+    if (mode === 'foot') {
+      await page.evaluate(() => {
+        const g = window.__game;
+        const c = g.vehicles.cars[g.vehicles.playerIndex ?? 0];
+        g.teleport(c.x + 2.4, c.z, 0);
+      });
+      await page.keyboard.press('KeyF');
+      await page.waitForFunction(() => window.__game.mode === 'driving', { timeout: 3000 });
+    }
   };
 
   // Drive over a line of pedestrians to earn a wanted level. Polls for police
@@ -682,7 +694,7 @@ try {
         ped.x = g.player.x + 1.3; ped.z = g.player.z;
       }
     });
-    await page.keyboard.press('Space'); // punch
+    await page.keyboard.press('KeyJ'); // punch (J / left click; Space is jump)
     await page.waitForTimeout(120);
     gibbed = await page.evaluate(() => window.__game.peds.peds[0].state === 'gibbed');
   }
@@ -762,6 +774,90 @@ try {
     pushed >= 1.9, // outside CAR_RADIUS — not standing inside the car
     `distance to car = ${pushed.toFixed(2)}`,
   );
+
+  // --- 14d. Jump onto a shop table (stool / table tops are walkable).
+  await reset();
+  await page.keyboard.press('KeyF');
+  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 2000 });
+  const jumpSetup = await page.evaluate(() => {
+    const g = window.__game;
+    const shop = g.city.shops.find((s) => s.def.kind === 'noodle' && !s.nightOnly);
+    g.teleport(shop.x + shop.nx * 1.2, shop.z, shop.nx > 0 ? Math.PI : 0);
+    return { id: shop.id, nx: shop.nx, x: shop.x, z: shop.z };
+  });
+  let table = null;
+  for (let i = 0; i < 40 && !table; i++) {
+    await page.waitForTimeout(100);
+    table = await page.evaluate((id) => {
+      const props = window.__game.interiorProps();
+      const t = props.find((p) => p.shopId === id && p.prop.startsWith('table'));
+      return t ? { x: t.x, z: t.z, h: t.h, w: t.w } : null;
+    }, jumpSetup.id);
+  }
+  let peak = 0;
+  let landedOn = 0;
+  if (table) {
+    await page.evaluate((pose) => {
+      // Stand on the street side of the table, facing inland, and sprint at it.
+      window.__game.teleport(pose.x, pose.z, pose.heading);
+    }, {
+      x: table.x + jumpSetup.nx * (table.w / 2 + 0.55),
+      z: table.z,
+      heading: jumpSetup.nx > 0 ? Math.PI : 0,
+    });
+    await page.keyboard.down('ShiftLeft');
+    await page.keyboard.down('KeyW');
+    for (let i = 0; i < 28; i++) {
+      await page.keyboard.down('Space');
+      await page.waitForTimeout(40);
+      await page.keyboard.up('Space');
+      await page.waitForTimeout(80);
+      const sample = await page.evaluate(() => ({
+        y: window.__game.player.y,
+        grounded: window.__game.player.grounded,
+      }));
+      if (sample.y > peak) peak = sample.y;
+      if (sample.grounded && sample.y > 0.4) landedOn = sample.y;
+    }
+    await page.keyboard.up('KeyW');
+    await page.keyboard.up('ShiftLeft');
+  }
+  check(
+    'jump lands on a shop table',
+    !!table && landedOn > 0.4,
+    `table=${table ? table.h.toFixed(2) : 'none'} peak=${peak.toFixed(2)} landed=${landedOn.toFixed(2)}`,
+  );
+
+  // --- 14e. Walk into each required shop type. The back wall still stops you.
+  await reset();
+  await page.keyboard.press('KeyF');
+  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 2000 });
+  for (const kind of ['noodle', 'fenjiao', 'grill', 'tea']) {
+    const shop = await page.evaluate((kind) => {
+      const s = window.__game.city.shops.find((sh) => sh.def.kind === kind && !sh.nightOnly);
+      const heading = s.nx > 0 ? Math.PI : 0;
+      window.__game.teleport(s.x + s.nx * 1.0, s.z, heading);
+      return { id: s.id, x: s.x, z: s.z, nx: s.nx, depth: 8 };
+    }, kind);
+    await page.keyboard.down('KeyW');
+    let inside = { x: shop.x, interior: false, cam: 0 };
+    for (let i = 0; i < 36; i++) {
+      await page.waitForTimeout(120);
+      inside = await page.evaluate((s) => {
+        const p = window.__game.player;
+        const inland = s.nx > 0 ? p.x < s.x - 1.5 : p.x > s.x + 1.5;
+        return { x: p.x, interior: inland && window.__game.interior, cam: window.__game.camDist };
+      }, shop);
+      if (inside.interior) break;
+    }
+    await page.keyboard.up('KeyW');
+    const blocked = shop.nx > 0 ? inside.x > shop.x - 9.2 : inside.x < shop.x + 9.2;
+    check(
+      `walk into a ${kind} shop without the camera clipping`,
+      inside.interior && blocked && inside.cam > 0.7 && inside.cam < 5.2,
+      `x=${inside.x.toFixed(2)} interior=${inside.interior} cam=${inside.cam.toFixed(2)}`,
+    );
+  }
 
   // --- 15. Day/night cycle advances over time.
   await reset();

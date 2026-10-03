@@ -16,21 +16,21 @@ import { type Aabb, type Vec2, resolveCircleAabb } from './Collision';
  * (R007) loads a chunk's colliders on demand and drops them when the chunk
  * unloads. A removed slot is tombstoned (`null`) and skipped by `resolve`.
  */
-export class SpatialGrid {
+export class SpatialGrid<T extends Aabb = Aabb> {
   private readonly cells = new Map<number, number[]>();
-  private readonly boxes: Array<Aabb | null> = [];
+  private readonly boxes: Array<T | null> = [];
   private stamp: Int32Array;
   private gen = 0;
   private readonly inv: number;
 
-  constructor(boxes: readonly Aabb[], cellSize: number) {
+  constructor(boxes: readonly T[], cellSize: number) {
     this.inv = 1 / cellSize;
     this.stamp = new Int32Array(Math.max(16, boxes.length)).fill(-1);
     for (const b of boxes) this.insert(b);
   }
 
   /** Add a static box; returns an id used to `remove` it later (streaming). */
-  insert(box: Aabb): number {
+  insert(box: T): number {
     const id = this.boxes.length;
     this.boxes.push(box);
     if (id >= this.stamp.length) {
@@ -85,6 +85,33 @@ export class SpatialGrid {
       }
     }
     return { x, z };
+  }
+
+  /**
+   * Write every unique nearby box into `out` and return the count.
+   * `out` is reused by the caller; this does not allocate.
+   */
+  query(x: number, z: number, radius: number, out: T[]): number {
+    let n = 0;
+    const gen = ++this.gen;
+    const ix0 = Math.floor((x - radius) * this.inv);
+    const ix1 = Math.floor((x + radius) * this.inv);
+    const iz0 = Math.floor((z - radius) * this.inv);
+    const iz1 = Math.floor((z + radius) * this.inv);
+    for (let ix = ix0; ix <= ix1; ix++) {
+      for (let iz = iz0; iz <= iz1; iz++) {
+        const cell = this.cells.get(key(ix, iz));
+        if (!cell) continue;
+        for (const bi of cell) {
+          if (this.stamp[bi] === gen) continue;
+          this.stamp[bi] = gen;
+          const box = this.boxes[bi];
+          if (!box) continue;
+          out[n++] = box;
+        }
+      }
+    }
+    return n;
   }
 
   private forEachCell(box: Aabb, fn: (k: number) => void): void {

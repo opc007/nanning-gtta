@@ -61,6 +61,39 @@ describe('readGamepadIntent', () => {
     buttons[GP.L3] = 1;
     const r = readGamepadIntent([0, 0, 0, 0], buttons);
     expect(r.handbrake).toBe(true);
+    expect(r.crouch).toBe(true);
     expect(r.sprint).toBe(true);
+  });
+
+  it('maps A to jump, LT to sprint, and does not treat A as sprint', () => {
+    const buttons = noButtons.slice();
+    buttons[GP.A] = 1;
+    const jump = readGamepadIntent([0, 0, 0, 0], buttons);
+    expect(jump.jump).toBe(true);
+    expect(jump.sprint).toBe(false);
+    buttons[GP.A] = 0;
+    buttons[GP.LT] = 1;
+    const sprint = readGamepadIntent([0, 0, 0, 0], buttons);
+    expect(sprint.sprint).toBe(true);
+    expect(sprint.throttle).toBeCloseTo(-1, 6);
+  });
+
+  it('maps X attack, Y grab, RB mount, and d-pad up interact', () => {
+    const buttons = noButtons.slice();
+    buttons[GP.X] = 1;
+    buttons[GP.Y] = 1;
+    buttons[GP.RB] = 1;
+    buttons[GP.DU] = 1;
+    const r = readGamepadIntent([0, 0, 0, 0], buttons);
+    expect(r.attack).toBe(true);
+    expect(r.grab).toBe(true);
+    expect(r.mount).toBe(true);
+    expect(r.interact).toBe(true);
+  });
+
+  it('reads the right stick as look', () => {
+    const r = readGamepadIntent([0, 0, 1, -1], noButtons);
+    expect(r.lookX).toBeCloseTo(Math.SQRT1_2, 1);
+    expect(r.lookY).toBeLessThan(0);
   });
 });

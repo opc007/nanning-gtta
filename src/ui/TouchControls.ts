@@ -10,6 +10,9 @@ import {
   Grab,
   Maximize,
   Minimize,
+  ArrowUp,
+  ArrowDown,
+  Package,
 } from 'lucide';
 
 /** Build a lucide SVG sized for a control, transparent to pointer events. */
@@ -40,6 +43,16 @@ export class TouchControls {
   private resetEdge = false;
   private radioEdge = false;
   private punchEdge = false;
+  private jumpEdge = false;
+  private jumpDown = false;
+  private crouchEdge = false;
+  private grabEdge = false;
+  private interactEdge = false;
+  private lookDx = 0;
+  private lookDy = 0;
+  private lookPointer: number | null = null;
+  private lookLastX = 0;
+  private lookLastY = 0;
 
   private stickPointer: number | null = null;
   private readonly base: HTMLElement;
@@ -124,6 +137,48 @@ export class TouchControls {
     this.holdButton(pad, 'tc-reset', RotateCcw, 'reset', () => (this.resetEdge = true));
     this.holdButton(pad, 'tc-radio', Radio, 'radio', () => (this.radioEdge = true));
     this.holdButton(pad, 'tc-punch', Grab, 'punch', () => (this.punchEdge = true));
+    this.holdButton(
+      pad,
+      'tc-jump',
+      ArrowUp,
+      'jump',
+      () => {
+        this.jumpEdge = true;
+        this.jumpDown = true;
+      },
+      () => (this.jumpDown = false),
+    );
+    this.holdButton(pad, 'tc-crouch', ArrowDown, 'crouch', () => (this.crouchEdge = true));
+    this.holdButton(pad, 'tc-grab', Package, 'pick up', () => (this.grabEdge = true));
+    this.holdButton(pad, 'tc-interact', Radio, 'interact', () => (this.interactEdge = true));
+
+    // Right-half drag orbits the camera. Buttons sit above this layer.
+    const look = div(
+      root,
+      'tc-look',
+      'position:absolute;left:50%;top:0;right:0;bottom:0;pointer-events:auto;touch-action:none;z-index:1;',
+    );
+    pad.style.zIndex = '2';
+    look.addEventListener('pointerdown', (e) => {
+      if (this.lookPointer !== null) return;
+      this.lookPointer = e.pointerId;
+      this.lookLastX = e.clientX;
+      this.lookLastY = e.clientY;
+      e.preventDefault();
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.lookPointer) return;
+      this.lookDx += e.clientX - this.lookLastX;
+      this.lookDy += e.clientY - this.lookLastY;
+      this.lookLastX = e.clientX;
+      this.lookLastY = e.clientY;
+    });
+    const endLook = (e: PointerEvent): void => {
+      if (e.pointerId !== this.lookPointer) return;
+      this.lookPointer = null;
+    };
+    window.addEventListener('pointerup', endLook);
+    window.addEventListener('pointercancel', endLook);
 
     this.addFullscreenButton(root);
   }
@@ -146,7 +201,7 @@ export class TouchControls {
       root,
       'tc-fullscreen',
       'position:absolute;top:calc(14px + env(safe-area-inset-top));' +
-        'right:calc(14px + env(safe-area-inset-right));width:54px;height:54px;border-radius:50%;' +
+        'right:calc(14px + env(safe-area-inset-right));width:54px;height:54px;border-radius:50%;z-index:3;' +
         'pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;' +
         'background:rgba(20,26,40,.55);border:2px solid rgba(255,255,255,.22);color:#e8ecf5;',
     );
@@ -235,6 +290,37 @@ export class TouchControls {
     const p = this.punchEdge;
     this.punchEdge = false;
     return p;
+  }
+  get jumpHeld(): boolean {
+    return this.jumpDown;
+  }
+  consumeJump(): boolean {
+    const j = this.jumpEdge;
+    this.jumpEdge = false;
+    return j;
+  }
+  consumeCrouch(): boolean {
+    const c = this.crouchEdge;
+    this.crouchEdge = false;
+    return c;
+  }
+  consumeGrab(): boolean {
+    const g = this.grabEdge;
+    this.grabEdge = false;
+    return g;
+  }
+  consumeInteract(): boolean {
+    const i = this.interactEdge;
+    this.interactEdge = false;
+    return i;
+  }
+  /** Pixels of right-half drag since the last consume. */
+  consumeLook(): { x: number; y: number } {
+    const x = this.lookDx;
+    const y = this.lookDy;
+    this.lookDx = 0;
+    this.lookDy = 0;
+    return { x, y };
   }
 }
 

@@ -1,7 +1,23 @@
 import * as THREE from 'three';
-import { damp } from '../core/math';
-import { followDistance, lookLead, type FollowParams } from '../core/followCam';
+import { damp, angleDelta, clamp } from '../core/math';
+import {
+  approachCameraDistance,
+  cameraPullDistance,
+  clampPitch,
+  followDistance,
+  lookLead,
+  type FollowParams,
+} from '../core/followCam';
+import { segmentHitAabb3, type Aabb3 } from './Collision';
 import type { SpatialGrid } from './SpatialGrid';
+
+/** On-foot chase. Closer than the old 8.6 m framing so the street and the coat both read. */
+export const STREET_CAM: FollowParams = { distance: 5.5, height: 2.3, lookHeight: 1.5, stiffness: 8 };
+/** Pulled in once the player is inside a shop, so the camera fits the room. */
+export const INTERIOR_CAM: FollowParams = { distance: 3.2, height: 1.9, lookHeight: 1.45, stiffness: 10 };
+
+const PITCH_STREET = { min: (-30 * Math.PI) / 180, max: (55 * Math.PI) / 180 };
+const PITCH_INTERIOR = { min: (-20 * Math.PI) / 180, max: (60 * Math.PI) / 180 };
 
 export type { FollowParams };
 
@@ -23,6 +39,15 @@ export class FollowCamera {
   private snapped = false;
   /** Extra world positions that block the camera (tree canopies, awnings). */
   private softBlockers: { x: number; z: number; r: number }[] = [];
+  /** Orbit for the on-foot camera. Yaw 0 looks along +X. Positive pitch looks down. */
+  orbitYaw = 0;
+  orbitPitch = 0.15;
+  private shownDist = STREET_CAM.distance;
+  private lookIdle = 0;
+  /** Distance from the look point to the eye after occlusion. Read by the rig. */
+  eyeDistance = STREET_CAM.distance;
+  /** True while the pointer is locked. Auto-return waits until it isn't. */
+  pointerLocked = false;
 
   constructor(private readonly camera: THREE.PerspectiveCamera) {}
 
@@ -142,5 +167,107 @@ export class FollowCamera {
     const dx = this.look.x - this.camera.position.x;
     const dz = this.look.z - this.camera.position.z;
     return Math.atan2(-dz, dx);
+  }
+
+  /**
+   * Drop the orbit behind the avatar and place the camera there immediately,
+   * so camera-relative walking matches the heading on the same frame.
+   */
+  snapBehind(heading: number, x: number, z: number, feetY = 0, preset: FollowParams = STREET_CAM): void {
+    this.orbitYaw = heading;
+    this.orbitPitch = Math.atan2(preset.height - preset.lookHeight, preset.distance);
+    this.shownDist = preset.distance;
+    this.eyeDistance = preset.distance;
+    this.lookIdle = 0;
+    this.snapped = true;
+    const pitch = this.orbitPitch;
+    const horiz = Math.cos(pitch) * preset.distance;
+    const fx = Math.cos(heading);
+    const fz = -Math.sin(heading);
+    const lookY = feetY + preset.lookHeight;
+    this.look.set(x, lookY, z);
+    this.camera.position.set(x - fx * horiz, lookY + Math.sin(pitch) * preset.distance, z - fz * horiz);
+    this.camera.lookAt(this.look);
+  }
+
+  /**
+   * On-foot orbit. `lookDX/lookDY` are radians this frame (mouse, touch, stick).
+   * Walls pull the eye in immediately; it eases back out at 3 m/s.
+   * `blocks` are the height boxes (and furniture) the segment can hit.
+   */
+  updateOnFoot(
+    x: number,
+    feetY: number,
+    z: number,
+    heading: number,
+    preset: FollowParams,
+    dt: number,
+    lookDX: number,
+    lookDY: number,
+    blocks: readonly Aabb3[],
+    blockCount: number,
+  ): void {
+    const looking = Math.abs(lookDX) + Math.abs(lookDY) > 1e-5;
+    if (looking) this.lookIdle = 0;
+    else this.lookIdle += dt;
+
+    this.orbitYaw -= lookDX;
+    const limits = preset.distance < 4 ? PITCH_INTERIOR : PITCH_STREET;
+    this.orbitPitch = clampPitch(this.orbitPitch + lookDY, limits.min, limits.max);
+
+    // Hands off the mouse, pointer free: drift back behind the body.
+    if (!this.pointerLocked && !looking && this.lookIdle > 1.5) {
+      const dy = angleDelta(this.orbitYaw, heading);
+      const step = Math.min(Math.abs(dy), 2 * dt);
+      this.orbitYaw += Math.sign(dy) * step;
+      const rest = Math.atan2(preset.height - preset.lookHeight, preset.distance);
+      this.orbitPitch += clamp(rest - this.orbitPitch, -dt, dt);
+    }
+
+    this.shownDist = approachCameraDistance(this.shownDist, preset.distance, dt, 2.5);
+    const pitch = this.orbitPitch;
+    const horiz = Math.cos(pitch) * this.shownDist;
+    const fx = Math.cos(this.orbitYaw);
+    const fz = -Math.sin(this.orbitYaw);
+    const lookY = feetY + preset.lookHeight;
+    const desiredX = x - fx * horiz;
+    const desiredY = lookY + Math.sin(pitch) * this.shownDist;
+    const desiredZ = z - fz * horiz;
+
+    let hitT = -1;
+    for (let i = 0; i < blockCount; i++) {
+      const box = blocks[i];
+      if (!box.camBlock) continue;
+      const t = segmentHitAabb3(x, lookY, z, desiredX, desiredY, desiredZ, box);
+      if (t >= 0 && (hitT < 0 || t < hitT)) hitT = t;
+    }
+    for (const b of this.softBlockers) {
+      const dx = desiredX - x;
+      const dz = desiredZ - z;
+      const len2 = dx * dx + dz * dz;
+      if (len2 < 1e-4) continue;
+      const t = Math.max(0, Math.min(1, ((b.x - x) * dx + (b.z - z) * dz) / len2));
+      const px = x + dx * t;
+      const pz = z + dz * t;
+      if (Math.hypot(px - b.x, pz - b.z) < b.r * 0.55 && (hitT < 0 || t < hitT)) hitT = t;
+    }
+
+    const segLen = Math.hypot(desiredX - x, desiredY - lookY, desiredZ - z);
+    const pulled = cameraPullDistance(segLen, hitT);
+    this.eyeDistance = approachCameraDistance(this.eyeDistance, pulled, dt, 3);
+    const scale = segLen > 1e-4 ? this.eyeDistance / segLen : 1;
+    this.camera.position.set(
+      x + (desiredX - x) * scale,
+      lookY + (desiredY - lookY) * scale,
+      z + (desiredZ - z) * scale,
+    );
+    this.look.set(x, lookY, z);
+    this.camera.lookAt(this.look);
+
+    const fov = preset.distance < 4 ? 66 : 60;
+    if (Math.abs(this.camera.fov - fov) > 0.05) {
+      this.camera.fov = damp(this.camera.fov, fov, 6, dt);
+      this.camera.updateProjectionMatrix();
+    }
   }
 }

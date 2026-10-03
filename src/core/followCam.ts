@@ -1,3 +1,5 @@
+import { clamp } from './math';
+
 /** Pure camera-framing math for the chase cam. No `three`; unit-tested. */
 export interface FollowParams {
   distance: number;
@@ -39,4 +41,35 @@ export function lookLead(
   const cap = p.maxSwing ?? Infinity;
   const swing = Math.max(-cap, Math.min(cap, fullLateral * (p.slideSwing ?? 0)));
   return { forward: vForward / k, lateral: fullLateral - swing };
+}
+
+/** Pitch is clamped in radians. Positive pitch looks down. */
+export function clampPitch(pitch: number, min: number, max: number): number {
+  return clamp(pitch, min, max);
+}
+
+/**
+ * Distance from the look point to the eye after a wall hit.
+ * `hitT` is the segment parameter of the first occluder, or -1 when the
+ * path is clear. A hit pulls the eye to `hitDist - margin`, never closer
+ * than `minDist`, and never further than the requested distance.
+ */
+export function cameraPullDistance(
+  segmentLength: number,
+  hitT: number,
+  margin = 0.2,
+  minDist = 0.8,
+): number {
+  if (!(hitT >= 0) || segmentLength <= 0) return Math.max(minDist, segmentLength);
+  const pulled = hitT * segmentLength - margin;
+  return clamp(pulled, minDist, segmentLength);
+}
+
+/**
+ * Occlusion pulls in immediately. Clearing a wall eases the eye back out
+ * at `outSpeed` metres per second so the camera doesn't breathe.
+ */
+export function approachCameraDistance(current: number, desired: number, dt: number, outSpeed = 3): number {
+  if (desired <= current) return desired;
+  return Math.min(desired, current + outSpeed * dt);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { followDistance, lookLead, type FollowParams } from './followCam';
+import { approachCameraDistance, cameraPullDistance, clampPitch, followDistance, lookLead, type FollowParams } from './followCam';
 import { damp } from './math';
 
 const CAR_CAM: FollowParams = {
@@ -87,5 +87,30 @@ describe('camera framing', () => {
     expect(swing).toBeGreaterThan(0.05); // not pinned dead-centre
     expect(swing).toBeLessThanOrEqual(CAR_CAM.maxSwing! + 1e-9); // never past the cap (~20% screen)
     expect(swing).toBeLessThan(12 / CAR_CAM.stiffness); // far less than the original full swing
+  });
+});
+
+describe('on-foot camera occlusion', () => {
+  it('pulls the eye to the hit minus 0.2 m, and never closer than 0.8 m', () => {
+    // 5.5 m segment, wall at t=0.5 → hit at 2.75, eye at 2.55.
+    expect(cameraPullDistance(5.5, 0.5)).toBeCloseTo(2.55, 5);
+    // A hit on the nose clamps to the minimum.
+    expect(cameraPullDistance(5.5, 0.05)).toBeCloseTo(0.8, 5);
+    expect(cameraPullDistance(5.5, -1)).toBeCloseTo(5.5, 5);
+  });
+
+  it('snaps inward and eases back out at 3 m/s', () => {
+    expect(approachCameraDistance(5.5, 2.0, 1 / 60)).toBeCloseTo(2.0, 5);
+    expect(approachCameraDistance(2.0, 5.5, 1)).toBeCloseTo(5.0, 5);
+    expect(approachCameraDistance(2.0, 5.5, 2)).toBeCloseTo(5.5, 5);
+  });
+
+  it('clamps pitch into the street range', () => {
+    const min = (-30 * Math.PI) / 180;
+    const max = (55 * Math.PI) / 180;
+    expect(clampPitch(0.4, min, max)).toBeCloseTo(0.4, 5);
+    expect(clampPitch(1, min, max)).toBeCloseTo(max, 5);
+    expect(clampPitch(-2, min, max)).toBeCloseTo(min, 5);
+    expect(clampPitch(2, min, max)).toBeCloseTo(max, 5);
   });
 });
