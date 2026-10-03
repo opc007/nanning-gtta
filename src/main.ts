@@ -65,6 +65,12 @@ const gameMode = urlParams.get('mode') ?? 'explore';
 const streaming = urlParams.get('stream') === '1';
 /** Close-up of the protagonist. Used by the hero screenshot, not by play. */
 const heroShot = urlParams.get('hero') === '1';
+// `?hud=0` hides every DOM overlay so screenshots show the scene.
+if (urlParams.get('hud') === '0') {
+  const style = document.createElement('style');
+  style.textContent = '#app > div{visibility:hidden !important}';
+  document.head.appendChild(style);
+}
 let heat = 0;
 const config = { ...DEFAULT_CITY, seed: worldSeed };
 const assets = new CityAssets(config.seed);
@@ -118,7 +124,11 @@ if (streaming) {
 
 // Nanning opens at ~19:00: the 夜市 lanterns and shopfront neon are the whole
 // point of the map, and you can't judge any of it in the dark.
-if (nanning) timeOfDay = 0.79;
+// `?t=` pins the clock (0.45 is flat daylight) so material shots aren't dusk.
+if (nanning) {
+  const tParam = Number(urlParams.get('t'));
+  timeOfDay = urlParams.get('t') !== null && Number.isFinite(tParam) ? Math.min(0.999, Math.max(0, tParam)) : 0.79;
+}
 
 const env = new SceneEnv(container, city, {
   ...(touch ? { maxPixelRatio: 1.5, shadowMapSize: 1024 } : {}),
