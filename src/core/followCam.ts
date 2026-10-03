@@ -262,13 +262,15 @@ function segmentBlocked(
  */
 export function resolveChaseEye(q: ChaseEyeQuery): ChaseEye {
   const show = q.showSurface === true || q.feetY > 0.32;
-  const lookH = show ? Math.min(q.lookHeight, 0.55) : q.lookHeight;
+  // On a table or stool, aim at the shins so the top under the feet is in frame
+  // instead of the coat filling the picture.
+  const lookH = show ? Math.min(q.lookHeight, 0.32) : q.lookHeight;
   const lookY = q.feetY + lookH;
   const pitches = show
-    ? [0.5, 0.38, 0.64, 0.28]
+    ? [0.62, 0.5, 0.78, 0.4]
     : [q.pitch, q.pitch + 0.2, 0.36, 0.55];
   const scales = [1, 0.84, 0.68, 0.52];
-  const minGood = show ? 2.15 : 1.8;
+  const minGood = show ? 2.3 : 1.8;
   const confine = q.confine ?? null;
 
   let best: ChaseEye | null = null;
@@ -283,7 +285,7 @@ export function resolveChaseEye(q: ChaseEyeQuery): ChaseEye {
     if (segmentBlocked(q.x, lookY, q.z, pose.x, pose.y, pose.z, q.blocks, q.spheres)) return;
     const yawPen = Math.abs(angleDelta(0, yawOff)) * 0.85;
     const distPen = dist < minGood ? (minGood - dist) * 6 : Math.abs(q.distance - dist) * 0.1;
-    const pitchPen = Math.abs((show ? 0.48 : q.pitch) - p) * (show ? 0.7 : 0.3);
+    const pitchPen = Math.abs((show ? 0.62 : q.pitch) - p) * (show ? 0.7 : 0.3);
     const preferPen = q.preferYaw === undefined ? 0 : Math.abs(angleDelta(q.preferYaw, yaw)) * 0.25;
     const score = yawPen + distPen + pitchPen + preferPen;
     if (score < bestScore) {
