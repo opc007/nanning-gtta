@@ -75,7 +75,7 @@ try {
   };
   // Daylight, HUD hidden, stay on foot. Used where the assertion is the picture.
   const resetOnFoot = async () => {
-    const lit = new URL(URL);
+    const lit = new globalThis.URL(URL);
     lit.searchParams.set('t', '0.45');
     lit.searchParams.set('hud', '0');
     await page.goto(lit.toString(), { waitUntil: 'load' });
@@ -614,8 +614,13 @@ try {
     car.vx = 28; car.vz = 0; // a solid but survivable smack into the wall
     return { before: g.carHealth };
   });
-  await page.waitForTimeout(500);
-  const dented = await page.evaluate(() => ({ health: window.__game.carHealth, wasted: window.__game.wasted }));
+  const dentT0 = await page.evaluate(() => window.__game.timeOfDay);
+  let dented = { health: 100, wasted: false };
+  for (let i = 0; i < 40 && dented.health === 100 && !dented.wasted; i++) {
+    await page.waitForTimeout(80);
+    dented = await page.evaluate(() => ({ health: window.__game.carHealth, wasted: window.__game.wasted }));
+    if (await simSince(dentT0) > 0.8) break;
+  }
   check(
     'a crash damages the car without wrecking it',
     dent.before === 100 && dented.health < 100 && dented.health > 0 && !dented.wasted,
@@ -793,7 +798,7 @@ try {
   // --- 13c. On foot, punching a pedestrian gibs them into pixels (and scores).
   await reset();
   await page.keyboard.press('KeyF'); // get out of the car, on foot
-  await page.waitForTimeout(250);
+  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 8000 });
   const punchSetup = await page.evaluate(() => {
     const g = window.__game;
     g.player.heading = 0; // face +X
