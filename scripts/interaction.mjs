@@ -993,6 +993,12 @@ try {
       window.__game.teleport(s.x + s.nx * 1.0, s.z, heading);
       return { id: s.id, x: s.x, z: s.z, nx: s.nx, depth: 8 };
     }, kind);
+    // The interior flag updates on the sim tick, not inside teleport. A stale
+    // "inside" from the previous shop must not count as walking in.
+    await settle(page);
+    // Screenshots blur the page, and blur clears the key set. Focus again or W never lands.
+    await page.bringToFront();
+    await page.evaluate(() => window.focus());
     await page.keyboard.down('KeyW');
     let inside = { x: shop.x, interior: false, cam: 0 };
     for (let i = 0; i < 50; i++) {
@@ -1002,7 +1008,8 @@ try {
         interior: window.__game.interior,
         cam: window.__game.camDist,
       }), shop);
-      if (inside.interior) break;
+      const inland = shop.nx > 0 ? inside.x < shop.x - 0.35 : inside.x > shop.x + 0.35;
+      if (inside.interior && inland) break;
     }
     await page.keyboard.up('KeyW');
     // Still short of the back wall (8 m inland).
