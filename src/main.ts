@@ -10,7 +10,8 @@ import { Crowd } from './nanning/crowd';
 
 import { StreamedWorld } from './world/StreamedWorld';
 import { SceneEnv } from './render/Scene';
-import { CityAssets, makePed } from './render/Assets';
+import { CityAssets } from './render/Assets';
+import { makeHumanoid, animateHumanoid, PLAYER_STYLE, type CharacterRig } from './render/character';
 import { Player } from './entities/Player';
 import { FollowCamera, CAR_CAM, FOOT_CAM } from './systems/FollowCamera';
 import { Vehicles } from './systems/Vehicles';
@@ -23,7 +24,7 @@ import { Menu } from './ui/Menu';
 import { Controls } from './core/Controls';
 import { GameLoop } from './core/GameLoop';
 import { loadOptions, saveOptions, qualityPixelRatio, type GameOptions } from './core/options';
-import { lerp, angleLerp, starsFromHeat, daylightFactor } from './core/math';
+import { lerp, angleLerp, angleDelta, starsFromHeat, daylightFactor } from './core/math';
 import { Radio } from './audio/Radio';
 import { Sfx } from './audio/Sfx';
 import { toMph, type VehicleInput } from './vehicles/VehicleModel';
@@ -102,7 +103,12 @@ if (streaming) {
 
 // Nanning opens at ~19:00: the 夜市 lanterns and shopfront neon are the whole
 // point of the map, and you can't judge any of it in the dark.
-if (nanning) timeOfDay = 0.79;
+// ?t=0..1 overrides the clock. 0.79 is dusk; ?t=0.45 gives flat midday light,
+// which is the only honest way to judge a model that is normally seen at night.
+if (nanning) {
+  const tParam = Number(urlParams.get('t'));
+  timeOfDay = urlParams.get('t') !== null && Number.isFinite(tParam) ? tParam : 0.79;
+}
 
 const env = new SceneEnv(container, city, {
   ...(touch ? { maxPixelRatio: 1.5, shadowMapSize: 1024 } : {}),
@@ -144,7 +150,8 @@ if (streamedWorld) {
   }
 }
 
-const avatar = makePed(0x2266dd);
+const playerRig: CharacterRig = makeHumanoid(PLAYER_STYLE);
+const avatar = playerRig.group;
 env.scene.add(avatar);
 
 // Debug handle. Cheap to keep, and the headless smoke test asserts against it —
@@ -310,6 +317,16 @@ if (RADIO_ENABLED) {
     .catch(() => {});
 }
 
+// ?hud=0 strips every overlay. Used by the screenshot rig so a portrait of the
+// character isn't read through a minimap.
+const HUD_ON = urlParams.get('hud') !== '0';
+if (!HUD_ON) {
+  // Both overlay roots are direct children of #app with a high z-index.
+  const st = document.createElement('style');
+  st.textContent = '#app > div { display: none !important; }';
+  document.head.appendChild(st);
+}
+
 let mode: Mode = nanning ? 'foot' : 'driving';
 player.x = city.center.x;
 player.z = city.center.z;
@@ -326,6 +343,10 @@ let health = MAX_HEALTH;
 let wasted = false;
 let wastedTimer = 0;
 let pedContact = false; // were we in contact with a car last frame (edge-trigger)
+let turnPrev = 0; // player's heading a frame ago, for the walk-cycle sidestep lean
+let airTime = 0; // seconds since the jump started
+let punchTimer = 0; // counts down through the punch animation
+const PUNCH_TIME = 0.32;
 
 // Wanted system: "heat" rises with crimes and decays after a grace period;
 // it maps to 0–5 stars, and each star is one chasing police car.
@@ -510,6 +531,8 @@ function flushCarWrecks(): void {
 
 function update(dt: number): void {
   player.savePrev();
+  airTime = player.grounded ? 0 : airTime + dt;
+  if (punchTimer > 0) punchTimer = Math.max(0, punchTimer - dt);
   timeOfDay = (timeOfDay + dt / dayLength) % 1;
 
   // Stream the world around the active position (car when driving, else avatar).
@@ -568,11 +591,15 @@ function update(dt: number): void {
     updateFoot(dt);
     checkPedestrianDamage();
 
+    // Jump. Drives the vertical axis the base game simply didn't have.
+    if (controls.jumpPressed()) player.jump();
+
     // Punch: whatever's in front of you. A 骑楼 shopfront takes the hit and
     // starts losing integrity; otherwise it's a pedestrian.
     if (controls.punchPressed()) {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
+      punchTimer = PUNCH_TIME;
       const ev = shops?.hit(player.x, player.z, dirX, dirZ) ?? null;
       if (ev) {
         nnHud?.toast(ev.text, ev.kind === 'broke' ? '#ff5a4a' : ev.kind === 'hit' ? '#ff8a5a' : '#2ee6a8');
@@ -651,16 +678,37 @@ function render(alpha: number, frameDt: number): void {
 
   const ax = lerp(player.px, player.x, alpha);
   const az = lerp(player.pz, player.z, alpha);
+  const ay = lerp(player.py, player.y, alpha);
   const ah = angleLerp(player.ph, player.heading, alpha);
-  avatar.position.set(ax, 0, az);
+  avatar.position.set(ax, ay, az);
   avatar.rotation.y = ah;
   avatar.visible = mode === 'foot';
+  // The rig is what makes a person a person. Sidestep amount is derived from the
+  // component of movement perpendicular to facing.
+  const onFoot = mode === 'foot';
+  // Sidestep lean: compare the step's travel direction to where the body faces.
+  // `turnPrev` is the heading a frame ago, so a fast turn reads as a lean.
+  let strafe = 0;
+  if (onFoot && player.speed > 0.05) {
+    const turn = angleDelta(turnPrev, ah);
+    strafe = Math.max(-1, Math.min(1, turn / Math.max(frameDt, 1e-3) * 0.16));
+  }
+  turnPrev = angleLerp(turnPrev, ah, 1 - Math.exp(-10 * frameDt));
+  animateHumanoid(playerRig, frameDt, onFoot ? player.speed : 0, {
+    strafe: onFoot ? strafe : 0,
+    air: onFoot && !player.grounded ? 1 : 0,
+    vy: player.vy,
+    airTime: airTime,
+    punch: punchTimer > 0 ? punchTimer / PUNCH_TIME : 0,
+    sitting: !onFoot,
+  });
 
   const carPose = vehicles.playerPoseInterp(alpha);
   const active =
     mode === 'driving' && carPose ? carPose : { x: ax, z: az, heading: ah, speed: player.speed };
+  void ay;
   env.follow(active.x, active.z); // streamed ground/shadow/sun ride the player (no-op when finite)
-  lamp.position.set(active.x, 3.5, active.z);
+  lamp.position.set(active.x, 3.5 + (mode === 'foot' ? ay : 0), active.z);
   updateStreetlightPool(active.x, active.z);
   updateHeadlights(mode === 'driving' && carPose ? carPose : null);
 
@@ -676,24 +724,27 @@ function render(alpha: number, frameDt: number): void {
     camVx = Math.cos(ah) * player.speed;
     camVz = -Math.sin(ah) * player.speed;
   }
-  follow.update(active.x, active.z, active.heading, mode === 'driving' ? CAR_CAM : FOOT_CAM, frameDt, camVx, camVz);
+  if (!(globalThis as unknown as { freezeCam?: boolean }).freezeCam) {
+    follow.update(active.x, active.z, active.heading, mode === 'driving' ? CAR_CAM : FOOT_CAM, frameDt, camVx, camVz, ay);
+  }
 
   const speedMph = mode === 'driving' ? toMph(vehicles.playerForwardSpeed()) : toMph(player.speed);
   // The health bar reads car integrity while driving, avatar health on foot.
   const shownHealth = mode === 'driving' ? vehicles.playerCarHealth() : health;
-  hud.update(speedMph, mode, active, vehicles.positions(), shownHealth, wasted);
-  hud.setRunOverCount(peds.runOverCount);
-  hud.setCarName(mode === 'driving' ? vehicles.playerCarName() : null);
+  if (HUD_ON) hud.update(speedMph, mode, active, vehicles.positions(), shownHealth, wasted);
+  if (HUD_ON) hud.setRunOverCount(peds.runOverCount);
+  if (HUD_ON) hud.setCarName(mode === 'driving' ? vehicles.playerCarName() : null);
   // Radio readout is a dashboard thing — only show it while driving (the audio
   // itself still fades out with distance as you walk away).
-  hud.setRadio(mode === 'driving' ? (radio ? radio.label() : '📻 OFF') : '');
-  hud.setWanted(stars, wantedCooling);
-  hud.setClock(timeOfDay);
-  hud.setBusted(busted);
+  if (HUD_ON) hud.setRadio(mode === 'driving' ? (radio ? radio.label() : '📻 OFF') : '');
+  if (HUD_ON) hud.setWanted(stars, wantedCooling);
+  if (HUD_ON) hud.setClock(timeOfDay);
+  if (HUD_ON) hud.setBusted(busted);
 
   // Nanning layer: shops (buy / smash / satiety) + the overlay that shows it.
   if (shops && nnHud) {
     shops.update(frameDt, player.x, player.z);
+    if (!HUD_ON) { nnHud.setMuted(true); }
     nnHud.update(frameDt, shops.wallet, player.x, player.z, mode === 'foot' ? shops.focused : null);
   }
   if (missions) {

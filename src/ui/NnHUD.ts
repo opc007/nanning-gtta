@@ -39,6 +39,7 @@ export class NnHUD {
   private readonly panelItems: HTMLElement;
   private readonly panelMoney: HTMLElement;
   private readonly statEl: HTMLElement;
+  private readonly walletBox!: HTMLElement;
   private readonly missionBox: HTMLElement;
   private readonly missionTitle: HTMLElement;
   private readonly missionGiver: HTMLElement;
@@ -69,6 +70,7 @@ export class NnHUD {
 
     // ── Top-left: 钱包 + 饱食度 ─────────────────────────────────────────
     const walletBox = document.createElement('div');
+    this.walletBox = walletBox;
     walletBox.style.cssText = `position:absolute;left:20px;bottom:20px;padding:11px 15px;min-width:186px;${PANEL}`;
     this.walletEl = document.createElement('div');
     this.walletEl.style.cssText = `font-size:25px;font-weight:800;color:${GOLD};letter-spacing:.5px;line-height:1.1;`;
@@ -201,6 +203,14 @@ export class NnHUD {
     this.wpText.textContent = `${Math.round(dist)} m`;
     // Rotate the arrow by the bearing relative to where the camera is looking.
     this.wpArrow.style.transform = `rotate(${(((relAngle - camYaw) * 180) / Math.PI).toFixed(0)}deg)`;
+  }
+
+  /** Hide every widget — used by the screenshot rig for clean portraits. */
+  setMuted(on: boolean): void {
+    for (const el of [this.walletBox ?? null, this.statEl, this.missionBox, this.wpEl, this.promptEl]) {
+      if (el) el.style.visibility = on ? 'hidden' : '';
+    }
+
   }
 
   get isPanelOpen(): boolean {
