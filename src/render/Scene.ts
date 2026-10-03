@@ -3,6 +3,11 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
+import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { daylightFactor, sunPosition } from '../core/math';
 import { makeGlowTexture } from './textures';
 import type { City } from '../world/City';
@@ -18,6 +23,8 @@ export interface SceneQuality {
   streaming?: boolean; // streamed world: ground/shadow/sun follow the player (R007)
   /** Neon/lantern bloom. Off on coarse-pointer devices, which can't afford it. */
   bloom?: boolean;
+  /** `low` skips SSAO, outlines, the grade and FXAA. `?fx=low` forces it. */
+  fx?: 'low' | 'high';
 }
 
 // In streamed mode the shadow frustum is a tight window around the player rather
@@ -50,6 +57,11 @@ export class SceneEnv {
   private ground!: THREE.Mesh;
   private composer: EffectComposer | null = null;
   private bloomPass: UnrealBloomPass | null = null;
+  private outline: OutlinePass | null = null;
+  private fxaa: ShaderPass | null = null;
+  private grade: ShaderPass | null = null;
+  private outlineTargets: THREE.Object3D[] = [];
+  private readonly fx: 'low' | 'high';
   private readonly streaming: boolean;
   private followX = 0;
   private followZ = 0;
@@ -59,6 +71,7 @@ export class SceneEnv {
     const maxPixelRatio = quality.maxPixelRatio ?? 2;
     const shadowMapSize = quality.shadowMapSize ?? 2048;
     this.streaming = !!quality.streaming;
+    this.fx = quality.fx ?? 'high';
     // Finite world: the shadow frustum spans the whole map. Streamed world: a
     // tight window that follows the player (city.half is effectively unbounded).
     this.shadowHalf = this.streaming ? STREAM_SHADOW_HALF : city.half;
@@ -69,13 +82,18 @@ export class SceneEnv {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x141a2e);
     this.scene.fog = new THREE.Fog(0x141a2e, city.extent * 0.18, city.extent * 0.7);
+    // A small room probe so Standard materials (the untouched street) pick up
+    // soft reflections. Toon materials ignore it.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
 
     this.camera = new THREE.PerspectiveCamera(
       62,
@@ -114,7 +132,8 @@ export class SceneEnv {
     cam.bottom = -this.shadowHalf;
     cam.near = 1;
     cam.far = city.extent * 2.5;
-    sun.shadow.bias = -0.0006;
+    sun.shadow.bias = -0.00035;
+    sun.shadow.normalBias = 0.04;
     this.scene.add(sun);
     this.scene.add(sun.target); // target stays at origin; moving the light sweeps shadows
     this.sun = sun;
@@ -160,6 +179,24 @@ export class SceneEnv {
     this.hemi.color.copy(mix(NIGHT.hemiSky, DAY.hemiSky));
     this.sun.color.copy(mix(NIGHT.sun.color, DAY.sun.color));
     this.sun.intensity = lerpN(NIGHT.sun.intensity, DAY.sun.intensity);
+
+    // t=0.75 is the sine's dusk (daylight 0). A short window around it is the
+    // sample's golden hour; 0.79 (the default night boot) stays night.
+    const g = goldenHour(t);
+    if (g > 0) {
+      const goldSky = new THREE.Color(0xffc48a);
+      sky.lerp(goldSky, g);
+      (this.scene.background as THREE.Color).copy(sky);
+      (this.scene.fog as THREE.Fog).color.copy(sky);
+      this.ambient.color.lerp(new THREE.Color(0xffd8b0), g);
+      this.ambient.intensity = this.ambient.intensity * (1 - g) + 0.78 * g;
+      this.hemi.color.lerp(new THREE.Color(0xffe2b8), g);
+      this.hemi.groundColor.lerp(new THREE.Color(0xc48455), g);
+      this.sun.color.lerp(new THREE.Color(0xffb15e), g);
+      this.sun.intensity = this.sun.intensity * (1 - g) + 3.35 * g;
+    }
+    this.renderer.toneMappingExposure = 1.12 + 0.16 * g;
+    if (this.grade) this.grade.uniforms.warmth.value = 0.25 + 0.75 * g;
 
     // Sweep the light + disc along the day's arc. The target sits at the follow
     // centre (origin in the finite world; the player in the streamed world), so
@@ -234,7 +271,12 @@ export class SceneEnv {
     if (this.composer) {
       // Bloom tracks the day cycle: a noon sky must not bloom.
       const d = daylightFactor(this.lastTimeOfDay);
-      if (this.bloomPass) this.bloomPass.strength = 0.12 + 0.62 * (1 - d);
+      if (this.bloomPass) {
+        // Lanterns and the sign bloom. The sky stays under the threshold.
+        this.bloomPass.threshold = 0.84;
+        this.bloomPass.strength = 0.18 + 0.22 * (1 - d);
+        this.bloomPass.radius = 0.42;
+      }
       this.composer.render();
     } else {
       this.renderer.render(this.scene, this.camera);
@@ -243,13 +285,48 @@ export class SceneEnv {
 
   private lastTimeOfDay = 0;
 
+  /** Character + the sample shop, so OutlinePass knows what to ink. */
+  setOutline(objects: THREE.Object3D[]): void {
+    this.outlineTargets = objects;
+    if (this.outline) this.outline.selectedObjects = objects;
+  }
+
   private setupComposer(w: number, h: number, enabled: boolean): void {
     if (!enabled) return;
     try {
       const c = new EffectComposer(this.renderer);
       c.addPass(new RenderPass(this.scene, this.camera));
-      const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.75, 0.82);
+      const high = this.fx === 'high';
+      if (high) {
+        const ssao = new SSAOPass(this.scene, this.camera, w, h);
+        ssao.kernelRadius = 14;
+        ssao.minDistance = 0.002;
+        ssao.maxDistance = 0.14;
+        c.addPass(ssao);
+        const outline = new OutlinePass(new THREE.Vector2(w, h), this.scene, this.camera);
+        outline.edgeStrength = 3.4;
+        outline.edgeGlow = 0.15;
+        outline.edgeThickness = 1.35;
+        outline.pulsePeriod = 0;
+        outline.visibleEdgeColor.set(0x3a2c24);
+        outline.hiddenEdgeColor.set(0x3a2c24);
+        outline.selectedObjects = this.outlineTargets;
+        c.addPass(outline);
+        this.outline = outline;
+      }
+      const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.28, 0.5, 0.84);
       c.addPass(bloom);
+      if (high) {
+        const grade = new ShaderPass(GradeShader);
+        grade.uniforms.warmth.value = 0.4;
+        c.addPass(grade);
+        this.grade = grade;
+        const fxaa = new ShaderPass(FXAAShader);
+        const pr = this.renderer.getPixelRatio();
+        fxaa.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+        c.addPass(fxaa);
+        this.fxaa = fxaa;
+      }
       // OutputPass applies tone mapping + sRGB conversion at the end of the
       // chain, which is what keeps ACES from being applied twice.
       c.addPass(new OutputPass());
@@ -265,7 +342,49 @@ export class SceneEnv {
   private onResize = (): void => {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.composer?.setSize(window.innerWidth, window.innerHeight);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.renderer.setSize(w, h);
+    this.composer?.setSize(w, h);
+    if (this.fxaa) {
+      const pr = this.renderer.getPixelRatio();
+      this.fxaa.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+    }
   };
 }
+
+/** 0 at night and noon, 1 near t=0.735 (just before the dusk cutoff at 0.75). */
+function goldenHour(t: number): number {
+  const x = Math.abs(t - 0.735) / 0.07;
+  if (x >= 1) return 0;
+  const k = 1 - x;
+  return k * k;
+}
+
+const GradeShader = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    warmth: { value: 0.4 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float warmth;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec3 col = c.rgb;
+      float l = dot(col, vec3(0.299, 0.587, 0.114));
+      col *= mix(vec3(1.0), vec3(1.10, 1.03, 0.90), warmth);
+      col += vec3(0.045, 0.02, 0.0) * warmth * (1.0 - l);
+      col = pow(max(col, 0.0), vec3(0.95));
+      gl_FragColor = vec4(col, c.a);
+    }
+  `,
+};

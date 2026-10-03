@@ -22,11 +22,18 @@
 | 构建 | Vite 5 |
 | 测试 | Vitest（164 个单测） |
 | 渲染自测 | Playwright + headless Chromium（swiftshader） |
-| 美术 | 100% 程序化生成，**没有任何外部模型 / 贴图 / 音频文件** |
+| 美术 | 程序化为主。`public/assets/` 里可以放**许可证兼容的** GLB 和贴图（CC0 优先） |
 
 **依赖只有 4 个**：`three`、`simplex-noise`、`lucide`、`vite|typescript|vitest|playwright`。
-不要引入美术资源管线（GLTFLoader、贴图压缩等）——这是刻意的设计：整个游戏没有二进制资源，
-clone 下来 `npm install && npm run dev` 就能跑，仓库永远只有几百 KB。
+不要再加一套美术中间件（贴图压缩器、独立 DCC 导出链）。GLB 用 Three 自带的 `GLTFLoader` 从
+`public/assets/` 加载，地址必须带 `import.meta.env.BASE_URL`（Pages 的 base 是相对路径）。
+
+### 真实素材
+
+- 放在 `public/assets/`。每件在 `public/assets/CREDITS.md` 写来源和许可证。CC0 优先。
+- 样板（主角 + 复记老友粉）的下载总量控制在约 15 MB 以内。几何能压就压（Draco / meshopt）；
+  动画轨往往比网格大，先剪掉用不到的 clip 再决定要不要上解码器。
+- 收音机音频仍然不进仓库。不要把别人仓库的音频热链回来。
 
 ---
 

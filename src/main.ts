@@ -6,6 +6,7 @@ import { displayShopName, shopNameModeFrom } from './nanning/shopNames';
 import { NanningSession } from './session/nanningSession';
 import { buildCharacter } from './characters/buildCharacter';
 import { PROTAGONIST } from './characters/protagonist';
+import { loadStyledAvatar } from './render/gltfAvatar';
 import { InteriorView } from './render/InteriorView';
 import { stepPlayer, type PlayerWorld } from './player/PlayerController';
 import { PLAYER } from './player/params';
@@ -131,9 +132,12 @@ if (nanning) {
   timeOfDay = urlParams.get('t') !== null && Number.isFinite(tParam) ? Math.min(0.999, Math.max(0, tParam)) : 0.79;
 }
 
+const fxParam = urlParams.get('fx');
+const fxLow = fxParam === 'low' || (touch && fxParam !== 'high');
 const env = new SceneEnv(container, city, {
   ...(touch ? { maxPixelRatio: 1.5, shadowMapSize: 1024 } : {}),
   streaming,
+  fx: fxLow ? 'low' : 'high',
 });
 
 let session: NanningSession | null = null;
@@ -148,12 +152,17 @@ if (streamedWorld) {
 
 }
 
-// Default is the lab-coat protagonist. `?skin=suit` keeps the v0.3 suit rig as an alternate.
-const suitSkin = urlParams.get('skin') === 'suit';
-const avatarRig = suitSkin ? null : buildCharacter(PROTAGONIST);
+// Default skin is the rigged CC0 character. `?skin=procedural` is the box fallback.
+// `?skin=suit` keeps the v0.3 suit rig. `?anim=run|sit|walk` holds a pose for shots.
+const skinParam = urlParams.get('skin');
+const suitSkin = skinParam === 'suit';
+const proceduralSkin = skinParam === 'procedural';
+const animForce = urlParams.get('anim');
+let avatarRig = suitSkin ? null : buildCharacter(PROTAGONIST);
 const suitRig: CharacterRig | null = suitSkin ? makeHumanoid(PLAYER_STYLE) : null;
-const avatar = suitSkin ? suitRig!.group : avatarRig!.group;
+let avatar = suitSkin ? suitRig!.group : avatarRig!.group;
 env.scene.add(avatar);
+const assetsReady = { avatar: suitSkin || proceduralSkin, shop: streaming };
 // `?hero=1` is a portrait camera. A small fill keeps the coat and face readable
 // at night without changing the street's own lighting.
 const heroFill = heroShot ? new THREE.PointLight(0xfff1e2, 14, 7, 1.6) : null;
@@ -170,6 +179,7 @@ if (heroFill) env.scene.add(heroFill);
   get district() { return session?.district ?? null; },
   get shops() { return session?.shops ?? null; },
   get loop() { return loop; },
+  get ready() { return assetsReady.avatar && assetsReady.shop; },
 };
 
 // Sfx is constructed here so the street session can blip on a purchase. The
@@ -193,11 +203,37 @@ if (nanning) {
     seed: config.seed,
     touch,
     timeOfDay,
+    interiors: interiors ?? undefined,
     onHeat: (amount) => {
       heat = Math.min(100, heat + amount);
     },
     onPayout: (payout) => completeMission(payout),
     onBlip: () => sfx.footstep(),
+  });
+  if (session.laoyou) {
+    void session.laoyou.ready.then(() => {
+      assetsReady.shop = true;
+    });
+  } else {
+    assetsReady.shop = true;
+  }
+  const outlineTargets: THREE.Object3D[] = [avatar];
+  if (session.laoyou) outlineTargets.push(session.laoyou.group);
+  env.setOutline(outlineTargets);
+}
+if (!suitSkin && !proceduralSkin) {
+  void loadStyledAvatar(PROTAGONIST, animForce).then((rig) => {
+    env.scene.remove(avatar);
+    avatarRig = rig;
+    avatar = rig.group;
+    env.scene.add(avatar);
+    const next: THREE.Object3D[] = [avatar];
+    if (session?.laoyou) next.push(session.laoyou.group);
+    env.setOutline(next);
+    assetsReady.avatar = true;
+  }).catch((err) => {
+    console.warn('styled avatar fallback', err);
+    assetsReady.avatar = true;
   });
 }
 

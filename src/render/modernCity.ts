@@ -210,6 +210,8 @@ export function buildModernDistrict(
     const accentRoll = rnd();
     const accent = accentRoll < 0.55 ? 0xd8d2c4 : ACCENTS[Math.floor(rnd() * ACCENTS.length)];
     const bAccent = bucket('plaster', accent, 0, 4);
+    // 复记老友粉 is a dressed sample (laoyouSample). Same RNG consumption, no mass.
+    if (shopBy.get(i)?.def.id === 'fuji') continue;
 
     const fx = cx + faceNX * out; // the street-facing face centre
     const fz = cz + faceNZ * out;

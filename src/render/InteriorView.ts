@@ -150,6 +150,13 @@ export class InteriorView {
   private readonly instances = new Map<PropId, THREE.InstancedMesh>();
   private readonly dummy = new THREE.Object3D();
   private shellDirty = false;
+  /** Shops whose boxes are replaced by a dressed sample (复记老友粉). */
+  private readonly hiddenShops = new Set<string>();
+
+  /** Skip the instanced boxes and the grey shell for one shop. Collision stays. */
+  omitVisual(shopId: string): void {
+    this.hiddenShops.add(shopId);
+  }
 
   constructor(scene: THREE.Scene) {
     this.group.name = 'interiors';
@@ -235,6 +242,7 @@ export class InteriorView {
     const buckets = new Map<PropId, InteriorProp[]>();
     for (const id of PROP_IDS) buckets.set(id, []);
     for (const layout of this.layouts.values()) {
+      if (this.hiddenShops.has(layout.shopId)) continue;
       for (const p of layout.props) buckets.get(p.prop)?.push(p);
     }
     for (const id of PROP_IDS) {
@@ -267,6 +275,7 @@ export class InteriorView {
     }
     const parts: THREE.BufferGeometry[] = [];
     for (const layout of this.layouts.values()) {
+      if (this.hiddenShops.has(layout.shopId)) continue;
       const shell = this.shells.get(layout.shopId);
       if (!shell) continue;
       const b = layout.bounds;

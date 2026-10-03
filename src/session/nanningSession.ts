@@ -13,6 +13,7 @@ import { NnHUD } from '../ui/NnHUD';
 import { Missions, tagForShop } from '../nanning/missions';
 import { Crowd } from '../nanning/crowd';
 import { buildModernDistrict, addDistrictClutter, addBackgroundBuildings, type ModernDistrict } from '../render/modernCity';
+import { mountLaoyouSample, type LaoyouSample } from '../render/laoyouSample';
 import { resolveCircleAabb } from '../systems/Collision';
 
 export interface NanningPayout {
@@ -32,6 +33,8 @@ export interface NanningSessionOptions {
   onHeat: (amount: number) => void;
   onPayout: (payout: NanningPayout) => void;
   onBlip: () => void;
+  /** When set, 复记老友粉 is dressed as the visual sample. */
+  interiors?: { omitVisual(shopId: string): void };
 }
 
 export class NanningSession {
@@ -40,6 +43,7 @@ export class NanningSession {
   readonly crowd: Crowd;
   readonly hud: NnHUD;
   readonly district: ModernDistrict;
+  readonly laoyou: LaoyouSample | null;
   readonly camBlockers: { x: number; z: number; r: number }[];
   nightOpen: boolean;
 
@@ -52,6 +56,7 @@ export class NanningSession {
     addDistrictClutter(scene, district.clutterTargets, seed);
     addBackgroundBuildings(scene, city.buildings, seed + 4);
     this.district = district;
+    this.laoyou = opts.interiors ? mountLaoyouSample(scene, city, district, opts.interiors) : null;
 
     addBanyans(scene, city.props);
     this.camBlockers = city.props.map((p) => ({ x: p.x, z: p.z, r: 3.6 }));
@@ -169,6 +174,7 @@ export class NanningSession {
     );
     this.debtor = onFoot ? this.crowd.nearestDebtor(px, pz) : null;
     this.crowd.update(dt, px, pz, heat, this.shops.wallet.smashed);
+    this.laoyou?.update(dt);
   }
 
   render(camera: THREE.Camera): void {

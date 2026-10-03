@@ -8,8 +8,9 @@ Files in `public/` are copied verbatim to the deploy root (not hashed/bundled).
   ```ts
   loader.load(`${import.meta.env.BASE_URL}models/car.glb`, …)
   ```
-- **Keep big binaries out of git.** Anything more than a few MB (high-poly models,
-  large texture sets) goes on a **GitHub Release** and streams by URL — same
-  precedent as the radio audio (`radio-v1`). The repo + Pages site stay lean.
+- **CC0 (or otherwise compatible) sample models** live in `public/assets/` and are
+  listed in `public/assets/CREDITS.md`. Keep that set small (the noodle-shop sample
+  aims to stay under ~15 MB). Anything larger still belongs on a GitHub Release,
+  same precedent as the radio audio (`radio-v1`).
 - Models are a **render-layer** concern (load them from `src/render/`), keeping the
   pure simulation core Three-free.
