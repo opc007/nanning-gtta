@@ -4,13 +4,14 @@
 // doesn't exist.
 import { chromium } from 'playwright';
 import { PNG } from 'pngjs';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { preview } from 'vite';
 
 const OUT = process.env.OUT || 'nn-smoke.png';
-const EXE = '/workspace/.home/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome';
+const PINNED = '/workspace/.home/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome';
+const EXE = existsSync(PINNED) ? PINNED : chromium.executablePath();
 const server = process.env.URL ? null : await preview({ preview: { port: 5191 } });
-const URL = process.env.URL || server.resolvedUrls.local[0];
+const PAGE = process.env.URL || server.resolvedUrls.local[0];
 
 const browser = await chromium.launch({
   executablePath: EXE,
@@ -28,7 +29,7 @@ page.setDefaultTimeout(120000);
   page.on('console', (m) => m.type() === 'error' && !IGNORE.test(m.text()) && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 
-  await page.goto(URL, { waitUntil: 'load' });
+  await page.goto(PAGE, { waitUntil: 'load' });
   await page.waitForTimeout(4000);
   await page.evaluate(() => window.__skipSplash?.());
   await page.waitForTimeout(2500);
@@ -41,7 +42,7 @@ page.setDefaultTimeout(120000);
       wallet: document.body.innerText.match(/¥\s*\d+/)?.[0] ?? null,
       // Nanning layer actually mounted?
       nnArea: /中山路|邕州|邕江|朝阳路/.test(document.body.innerText),
-      perf: window.__nnPerf ?? null,
+      perf: window.__game?.perf ?? null,
     };
   });
   console.log('DOM:', JSON.stringify(dom));
@@ -74,6 +75,18 @@ page.setDefaultTimeout(120000);
 
   const late = errors.length;
   if (late) fail('errors after walk:\n  ' + errors.slice(0, 6).join('\n  '));
+
+  // Close-up of the procedural protagonist (`?hero=1` parks the camera on him).
+  const heroUrl = new globalThis.URL(PAGE);
+  heroUrl.searchParams.set('hero', '1');
+  await page.goto(heroUrl.toString(), { waitUntil: 'load' });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => window.__skipSplash?.());
+  await page.waitForTimeout(1500);
+  const heroOut = process.env.HERO || 'nn-hero.png';
+  await page.screenshot({ path: heroOut, timeout: 120000 });
+  console.log('hero close-up ->', heroOut);
+
   console.log(errors.length ? 'RESULT: FAIL' : 'RESULT: PASS');
 } catch (e) {
   fail(e.stack || e.message);

@@ -1,9 +1,9 @@
 {
-  "name": "gta7",
+  "name": "nanning-street",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "A browser-based, GTA-style 3D open-world driving slice. Built in TypeScript + Three.js. (Yes, the name is a joke.)",
+  "description": "南宁中山路美食街 — a browser vertical slice of one true-to-scale food street. TypeScript + Three.js.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

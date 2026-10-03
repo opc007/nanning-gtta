@@ -1,16 +1,13 @@
 import * as THREE from 'three';
 import { DEFAULT_CITY, type City } from './world/City';
-import { generateNanningCity, type NanningCity } from './nanning/layout';
-import { buildModernDistrict, addDistrictClutter, addBackgroundBuildings, type ModernDistrict } from './render/modernCity';
-import { addNanningScenery, updateNanningScenery, addBanyans } from './nanning/scenery';
-import { Shops } from './nanning/shops';
-import { NnHUD } from './ui/NnHUD';
-import { Missions, debtTargets, tagForShop } from './nanning/missions';
-import { Crowd } from './nanning/crowd';
+import { generateNanningCity, STREET_HALF, ARCADE_DEPTH, ALLEY_WIDTH, type NanningCity } from './nanning/layout';
+import { NanningSession } from './session/nanningSession';
+import { buildCharacter } from './characters/buildCharacter';
+import { PROTAGONIST } from './characters/protagonist';
 
 import { StreamedWorld } from './world/StreamedWorld';
 import { SceneEnv } from './render/Scene';
-import { CityAssets, makePed } from './render/Assets';
+import { CityAssets } from './render/Assets';
 import { Player } from './entities/Player';
 import { FollowCamera, CAR_CAM, FOOT_CAM } from './systems/FollowCamera';
 import { Vehicles } from './systems/Vehicles';
@@ -60,6 +57,9 @@ const worldSeed = Number.isFinite(seedParam) && urlParams.get('seed') !== null ?
 const gameMode = urlParams.get('mode') ?? 'explore';
 // `?stream=1` runs the unbounded streamed world (R007); default is the finite city.
 const streaming = urlParams.get('stream') === '1';
+/** Close-up of the protagonist. Used by the hero screenshot, not by play. */
+const heroShot = urlParams.get('hero') === '1';
+let heat = 0;
 const config = { ...DEFAULT_CITY, seed: worldSeed };
 const assets = new CityAssets(config.seed);
 
@@ -109,13 +109,7 @@ const env = new SceneEnv(container, city, {
   streaming,
 });
 
-let shops: Shops | null = null;
-let camBlockers: { x: number; z: number; r: number }[] = [];
-let modernRef: ModernDistrict | null = null;
-let missions: Missions | null = null;
-let crowd: Crowd | null = null;
-/** Debt NPC currently in reach, refreshed each frame. */
-let debtor: ReturnType<Crowd['nearestDebtor']> = null;
+let session: NanningSession | null = null;
 
 if (streamedWorld) {
   // env.scene now exists; load the initial ring around spawn (fires the hooks).
@@ -125,27 +119,15 @@ if (streamedWorld) {
   city.streetlights.forEach((s) => env.scene.add(assets.makeStreetlight(s)));
   if (!nanning) env.scene.add(assets.makeProps(city.props));
 
-  if (nanning) {
-    // Replace the base box-buildings with real architecture: 骑楼 runs, a
-    // 城楼 landmark, and the block skyline behind.
-    const district = buildModernDistrict(nanning.buildings, nanning.shops, config.seed);
-    env.scene.add(district.group);
-    addDistrictClutter(env.scene, district.clutterTargets, config.seed);
-    addBackgroundBuildings(env.scene, nanning.buildings, config.seed + 4);
-    modernRef = district;
-    addBanyans(env.scene, nanning.props);
-    // Banyan canopies are soft blockers for the camera: ~4 m of foliage per tree.
-    // Applied after `follow` exists (it's created further down, once the scene is up).
-    camBlockers = nanning.props.map((p) => ({ x: p.x, z: p.z, r: 3.6 }));
-    addNanningScenery(env.scene, nanning);
-    shops = new Shops(nanning, district, env.scene);
-    missions = new Missions(env.scene);
-    crowd = new Crowd(env.scene, debtTargets(nanning), touch ? 8 : 16);
-  }
 }
 
-const avatar = makePed(0x2266dd);
+const avatarRig = buildCharacter(PROTAGONIST);
+const avatar = avatarRig.group;
 env.scene.add(avatar);
+// `?hero=1` is a portrait camera. A small fill keeps the coat and face readable
+// at night without changing the street's own lighting.
+const heroFill = heroShot ? new THREE.PointLight(0xfff1e2, 14, 7, 1.6) : null;
+if (heroFill) env.scene.add(heroFill);
 
 // Debug handle. Cheap to keep, and the headless smoke test asserts against it —
 // which is the only reliable way to tell "the scene is empty" apart from "the
@@ -155,47 +137,31 @@ env.scene.add(avatar);
   get camera() { return env.camera; },
   get city() { return city; },
   get player() { return player; },
-  get district() { return modernRef; },
-  get shops() { return shops; },
+  get district() { return session?.district ?? null; },
+  get shops() { return session?.shops ?? null; },
   get loop() { return loop; },
 };
 
-// Nanning overlay: wallet / satiety / area cards / the buy panel. Sits on top of
-// the base HUD rather than replacing it.
-let nnHud: NnHUD | null = null;
-if (nanning) {
-  nnHud = new NnHUD(container, nanning.zones, {
-    onBuy: (shop, itemId) => {
-      const ev = shops?.buy(shop, itemId);
-      const hud = nnHud;
-      if (!ev || !hud) return;
-      hud.toast(ev.text, ev.kind === 'too-poor' ? '#ff5a4a' : '#2ee6a8');
-      sfx?.footstep();
-      if (ev.kind !== 'bought' || !shop) return;
-      hud.toast(shops?.randomEatLine() ?? '', '#ffd24a');
-      const u = shop.unit;
-      const payout = missions?.feed({ kind: tagForShop(u.def.kind), shopKind: u.def.kind, shopId: u.id });
-      if (payout) completeMission(payout);
-    },
-    onClose: () => nnHud?.closePanel(),
-  });
-}
+// Sfx is constructed here so the street session can blip on a purchase. The
+// audio context itself still resumes on the first gesture.
+const sfx = new Sfx();
 
-// The 满洲窗 and shopfront neon are the night glow of the whole district, so they
-// need the same daylight response the base game's windows get.
-/**
- * The day/night ramp. Shop signs, neon strips and shopfront glazing all live on
- * this curve; bloom in Scene.ts then does the optical work on top. This is the
- * single most important function for making 19:00 look like a lit street.
- */
-function applyNanningDaylight(d: number): void {
-  const lit = 1 - 0.95 * d;
-  for (const m of modernRef?.glowMats ?? []) {
-    if (m.transparent) m.opacity = 0.1 + 0.85 * lit;
-  }
-  for (const m of modernRef?.windowMats ?? []) {
-    m.emissiveIntensity = 0.02 + 1.15 * lit;
-  }
+// The street session is built after the scene exists. `completeMission` is a
+// function declaration, so the payout callback can close over it.
+if (nanning) {
+  session = new NanningSession({
+    scene: env.scene,
+    city: nanning,
+    container,
+    seed: config.seed,
+    touch,
+    timeOfDay,
+    onHeat: (amount) => {
+      heat = Math.min(100, heat + amount);
+    },
+    onPayout: (payout) => completeMission(payout),
+    onBlip: () => sfx.footstep(),
+  });
 }
 
 // Warm glow that rides the active actor so the night street reads up close.
@@ -226,7 +192,10 @@ const world = new World();
 const debris = new Debris(env.scene, world);
 // Stream mode (MVP): no ambient traffic/peds yet — they spawn player-relative in
 // a follow-up (Phase C). The player car still spawns at the origin intersection.
-const vehicles = new Vehicles(env.scene, city, world, debris, streaming ? 0 : touch ? 24 : 40);
+// On the food street the only cars are the background lanes past the barriers.
+// `?stream=1` keeps the upstream world with no ambient traffic (unchanged).
+const trafficCount = streaming ? 0 : nanning ? 8 : touch ? 24 : 40;
+const vehicles = new Vehicles(env.scene, city, world, debris, trafficCount);
 const peds = new Pedestrians(env.scene, city, world, debris, streaming ? 0 : touch ? 28 : 60);
 const hud = new HUD(container, city, touch, streaming);
 
@@ -238,7 +207,7 @@ if (touch) {
 const controls = new Controls(touchRoot);
 const follow = new FollowCamera(env.camera);
 follow.setGrid(city.grid); // the chase camera needs the world collider grid to know what blocks it
-follow.setSoftBlockers(camBlockers);
+follow.setSoftBlockers(session?.camBlockers ?? []);
 const player = new Player();
 
 // The radio streams one track at a time from a CDN-hosted manifest, so the
@@ -247,7 +216,6 @@ const player = new Player();
 let radio: Radio | null = null;
 let radioPrimed = false;
 let radioCarIndex: number | null = null; // which car's radio is currently loaded
-const sfx = new Sfx();
 let audioGestured = false;
 const markGesture = (): void => {
   audioGestured = true;
@@ -313,8 +281,8 @@ if (RADIO_ENABLED) {
 let mode: Mode = nanning ? 'foot' : 'driving';
 player.x = city.center.x;
 player.z = city.center.z;
-// Face north, up the arcade. Forward is (cos h, -sin h), so h = PI/2 looks toward -Z.
-if (nanning) player.heading = Math.PI / 2;
+// Face south, down the street toward the night market. Forward is (cos h, -sin h).
+if (nanning) player.heading = -Math.PI / 2;
 
 const MAX_HEALTH = 100;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
@@ -332,7 +300,6 @@ let pedContact = false; // were we in contact with a car last frame (edge-trigge
 const CRIME_HEAT = 16; // heat added per pedestrian you personally run over
 const HEAT_GRACE = 4; // seconds OUT OF POLICE SIGHT before heat starts to cool
 const HEAT_DECAY = 11; // heat lost per second once cooling
-let heat = 0;
 let stars = 0;
 let sinceUnseen = 0; // seconds since a cop last had line of sight (the "get away" timer)
 let wantedCooling = false; // true while stars are cooling off (HUD flashes them)
@@ -398,6 +365,13 @@ function updateFoot(dt: number): void {
   const fixed = city.grid.resolve(player.x, player.z, FOOT_RADIUS);
   player.x = fixed.x;
   player.z = fixed.z;
+  if (session) {
+    const offStall = session.resolveStalls(player.x, player.z, FOOT_RADIUS);
+    player.x = offStall.x;
+    player.z = offStall.z;
+    // Keep the slice on the street. The cross roads past the barriers are scenery.
+    player.x = Math.max(-42, Math.min(42, player.x));
+  }
   // Don't walk through cars (parked or otherwise).
   const offCar = vehicles.resolveActor(player.x, player.z, FOOT_RADIUS);
   player.x = offCar.x;
@@ -535,24 +509,8 @@ function update(dt: number): void {
   // E does double duty in 南宁: at a shopfront it opens the buy panel, and if
   // the panel is already open it closes it. Anywhere else it enters/exits a car.
   if (controls.enterExitPressed()) {
-    if (nnHud?.isPanelOpen) {
-      nnHud.closePanel();
-    } else if (mode === 'foot' && shops?.focused) {
-      nnHud?.togglePanel(shops.focused);
-    } else if (mode === 'foot' && debtor) {
-      // 收租: the whole point of GTA's debt collection is that the person
-      // handing over the money is a character, so they get a line and a walk-off.
-      const got = crowd?.collect(debtor) ?? 0;
-      if (got > 0 && shops) {
-        shops.wallet.money += got;
-        nnHud?.toast(`收到 ${debtor.name} 嘅 ¥${got}`, '#ffd24a');
-        const payout = missions?.feed({ kind: 'talk', debt: 1 });
-        if (payout) completeMission(payout);
-      }
-      debtor = null;
-    } else {
-      toggleVehicle();
-    }
+    const consumed = session?.interact(mode === 'foot') ?? false;
+    if (!consumed) toggleVehicle();
   }
 
   updateWanted(dt);
@@ -573,17 +531,8 @@ function update(dt: number): void {
     if (controls.punchPressed()) {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
-      const ev = shops?.hit(player.x, player.z, dirX, dirZ) ?? null;
-      if (ev) {
-        nnHud?.toast(ev.text, ev.kind === 'broke' ? '#ff5a4a' : ev.kind === 'hit' ? '#ff8a5a' : '#2ee6a8');
-        if (ev.heat > 0) heat = Math.min(100, heat + ev.heat);
-        if (ev.kind === 'broke') {
-          const payout = missions?.feed({ kind: 'smash' });
-          if (payout) completeMission(payout);
-        }
-      } else {
-        peds.punch(player.x, player.z, dirX, dirZ);
-      }
+      const hitShop = session?.punch(player.x, player.z, dirX, dirZ) ?? false;
+      if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ);
     }
 
     // Footsteps cadence with travel distance (faster when sprinting).
@@ -652,9 +601,15 @@ function render(alpha: number, frameDt: number): void {
   const ax = lerp(player.px, player.x, alpha);
   const az = lerp(player.pz, player.z, alpha);
   const ah = angleLerp(player.ph, player.heading, alpha);
-  avatar.position.set(ax, 0, az);
+  const onArcade =
+    !!nanning &&
+    Math.abs(ax) > STREET_HALF &&
+    Math.abs(ax) < STREET_HALF + ARCADE_DEPTH &&
+    !(ax < 0 && Math.abs(az) < ALLEY_WIDTH / 2);
+  avatar.position.set(ax, onArcade ? 0.15 : 0, az);
   avatar.rotation.y = ah;
   avatar.visible = mode === 'foot';
+  avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt);
 
   const carPose = vehicles.playerPoseInterp(alpha);
   const active =
@@ -677,6 +632,13 @@ function render(alpha: number, frameDt: number): void {
     camVz = -Math.sin(ah) * player.speed;
   }
   follow.update(active.x, active.z, active.heading, mode === 'driving' ? CAR_CAM : FOOT_CAM, frameDt, camVx, camVz);
+  // `?hero=1` frames the protagonist for a close-up. The chase cam runs first
+  // so the rest of the frame is normal; this only overrides the final pose.
+  if (heroShot && mode === 'foot') {
+    env.camera.position.set(ax + 1.15, 1.12, az + 1.0);
+    env.camera.lookAt(ax, 0.9, az);
+    heroFill?.position.set(ax + 0.85, 1.55, az + 0.65);
+  }
 
   const speedMph = mode === 'driving' ? toMph(vehicles.playerForwardSpeed()) : toMph(player.speed);
   // The health bar reads car integrity while driving, avatar health on foot.
@@ -691,24 +653,10 @@ function render(alpha: number, frameDt: number): void {
   hud.setClock(timeOfDay);
   hud.setBusted(busted);
 
-  // Nanning layer: shops (buy / smash / satiety) + the overlay that shows it.
-  if (shops && nnHud) {
-    shops.update(frameDt, player.x, player.z);
-    nnHud.update(frameDt, shops.wallet, player.x, player.z, mode === 'foot' ? shops.focused : null);
+  if (session) {
+    session.tick(frameDt, timeOfDay, player.x, player.z, mode === 'foot', heat, follow.yaw, env.scene, daylightFactor(timeOfDay));
+    session.render(env.camera);
   }
-  if (missions) {
-    missions.render(timeOfDay * 40);
-    nnHud?.setMission(missions);
-    nnHud?.setWaypoint(
-      mode === 'foot' ? missions.distanceTo(player.x, player.z) : Infinity,
-      missions.angleTo(player.x, player.z),
-      follow.yaw,
-    );
-    const d = mode === 'foot' ? crowd?.nearestDebtor(player.x, player.z) ?? null : null;
-    debtor = d;
-  }
-  crowd?.update(frameDt, player.x, player.z, heat, shops?.wallet.smashed ?? 0);
-  crowd?.render(env.camera);
 
   const driving = mode === 'driving';
   if (driving) {
@@ -730,8 +678,7 @@ function render(alpha: number, frameDt: number): void {
   env.setTimeOfDay(timeOfDay);
   const daylight = daylightFactor(timeOfDay);
   assets.setDaylight(daylight); // window/lamp lights off + glassy by day
-  applyNanningDaylight(daylight);
-  updateNanningScenery(env.scene, timeOfDay * 24, daylight);
+  session?.applyDaylight(daylight);
   env.render();
 
   // Perf telemetry (watched in the smoke run; see performance-vigilance memory).
@@ -830,9 +777,9 @@ window.__game = {
 };
 
 function completeMission(p: { title: string; reward: number; line: string }): void {
-  if (shops && p.reward > 0) shops.wallet.money += p.reward;
-  nnHud?.toast(`✅ ${p.title}  完成！${p.reward > 0 ? ` +¥${p.reward}` : ''}`, '#2ee6a8');
-  nnHud?.toast(p.line, '#ffd24a');
+  if (session && p.reward > 0) session.shops.wallet.money += p.reward;
+  session?.hud.toast(`✅ ${p.title}  完成！${p.reward > 0 ? ` +¥${p.reward}` : ''}`, '#2ee6a8');
+  session?.hud.toast(p.line, '#ffd24a');
   sfx?.enterCar();
 }
 

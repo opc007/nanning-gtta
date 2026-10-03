@@ -1,7 +1,7 @@
 /**
- * Nanning scenery: the things a city generator can't infer. Ground surfaces
- * (青石板 bluestone vs asphalt), 邕江, the 南宁大桥 crossing, the 夜市 stall
- * rows, and the string lights that make the night market glow.
+ * Nanning scenery for the single 中山路 run: bluestone carriageway, the raised
+ * qilou arcade, end barriers, night-market stalls, and the lanterns over the
+ * middle of the street.
  *
  * Everything static merges into one vertex-coloured mesh per category, so the
  * whole district is a handful of draw calls.
@@ -10,8 +10,19 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { NanningCity } from './layout';
-import { RIVER_Z, BRIDGE_Z0, BRIDGE_Z1, MAP_HALF } from './layout';
-import { makeBanyanGeometry } from '../render/nnArch';
+import {
+  STREET_Z0,
+  STREET_Z1,
+  STREET_HALF,
+  ARCADE_DEPTH,
+  ARCADE_RAISE,
+  ALLEY_WIDTH,
+  MIDDLE_Z0,
+  MIDDLE_Z1,
+} from './layout';
+import { nightMarketOpen } from './clock';
+import { makeBanyanGeometry, makeSignTexture } from '../render/nnArch';
+import type { ShopVisual } from '../render/modernCity';
 
 const merge = (parts: THREE.BufferGeometry[]): THREE.BufferGeometry =>
   mergeGeometries(parts) as THREE.BufferGeometry;
@@ -82,31 +93,6 @@ function bluestoneTexture(): THREE.CanvasTexture {
   return t;
 }
 
-/** Water surface: banded ripples that scroll, cheap but reads as moving water. */
-function waterTexture(): THREE.CanvasTexture {
-  const S = 256;
-  const c = document.createElement('canvas');
-  c.width = c.height = S;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#0d2a2e';
-  g.fillRect(0, 0, S, S);
-  for (let i = 0; i < 180; i++) {
-    const y = Math.random() * S;
-    const x = Math.random() * S;
-    const w = 12 + Math.random() * 60;
-    g.strokeStyle = `rgba(150,210,215,${0.03 + Math.random() * 0.08})`;
-    g.lineWidth = 1 + Math.random() * 2;
-    g.beginPath();
-    g.moveTo(x, y);
-    g.quadraticCurveTo(x + w / 2, y + (Math.random() - 0.5) * 6, x + w, y);
-    g.stroke();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
 // ── 夜市 stall ───────────────────────────────────────────────────────────────
 
 /** One market stall: canopy, poles, table, stools, and a little sign board. */
@@ -152,85 +138,6 @@ function stallGeometry(x: number, z: number, rot: number, hue: number): THREE.Bu
 // ── 南宁大桥 ─────────────────────────────────────────────────────────────────
 
 /**
- * The bridge is the one thing in the map you can drive across, so it needs to
- * read as a bridge from a distance: a white deck, twin arch ribs, and a
- * cross-braced portal. Built from a Catmull-Rom tube for the arch so it curves
- * like the real span rather than reading as a box.
- */
-function bridgeGroup(): THREE.Group {
-  const g = new THREE.Group();
-  const span = BRIDGE_Z1 - BRIDGE_Z0;
-  const zc = (BRIDGE_Z0 + BRIDGE_Z1) / 2;
-  const DECK_W = 20;
-
-  const white = new THREE.MeshStandardMaterial({ color: 0xe8e6e0, roughness: 0.6, metalness: 0.1 });
-  const steel = new THREE.MeshStandardMaterial({ color: 0xc9c6c0, roughness: 0.45, metalness: 0.5 });
-  const road = new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.95 });
-
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(DECK_W, 1.1, span), white);
-  deck.position.set(0, -0.55, zc);
-  deck.receiveShadow = true;
-  g.add(deck);
-
-  const roadTop = new THREE.Mesh(new THREE.PlaneGeometry(17, span), road);
-  roadTop.rotation.x = -Math.PI / 2;
-  roadTop.position.set(0, 0.01, zc);
-  g.add(roadTop);
-
-  // Twin arch ribs, one each side of the deck, rising 34 m at the crown.
-  for (const side of [-1, 1]) {
-    const pts: THREE.Vector3[] = [];
-    const RISE = 34;
-    const N = 26;
-    for (let i = 0; i <= N; i++) {
-      const t = i / N;
-      const z = BRIDGE_Z0 + t * span;
-      // Segmental parabola — a real arch, not a semicircle.
-      const y = RISE * (1 - Math.pow((t - 0.5) * 2, 2));
-      pts.push(new THREE.Vector3(side * 9.4, Math.max(0, y), z));
-    }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.85, 8, false), steel);
-    g.add(tube);
-    // Hangers
-    for (let i = 2; i < N - 1; i += 3) {
-      const p = pts[i];
-      if (p.y < 3) continue;
-      const h = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, p.y, 6), steel);
-      h.position.set(side * 9.4, p.y / 2, p.z);
-      g.add(h);
-    }
-  }
-
-  // Cross bracing between the ribs at deck level
-  for (let i = 0; i <= 10; i++) {
-    const z = BRIDGE_Z0 + (i / 10) * span;
-    const b = new THREE.Mesh(new THREE.BoxGeometry(18.8, 0.7, 0.7), steel);
-    b.position.set(0, 0.4, z);
-    g.add(b);
-  }
-
-  // Railings
-  for (const side of [-1, 1]) {
-    const r = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.2, span), white);
-    r.position.set(side * 10, 0.6, zc);
-    g.add(r);
-  }
-
-  // Piers
-  for (const z of [BRIDGE_Z0 + span * 0.3, BRIDGE_Z0 + span * 0.7]) {
-    for (const side of [-1, 1]) {
-      const p = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.2, 7, 10), white);
-      p.position.set(side * 7, -3.4, z);
-      g.add(p);
-    }
-  }
-
-  return g;
-}
-
-
-/**
  * 榕树 as one InstancedMesh. The base game's cone tree is fine for a generic
  * city; here it would be actively wrong, because the banyan canopy is the
  * defining feature of the Nanning skyline.
@@ -266,74 +173,142 @@ function mulberry(seed: number): () => number {
   };
 }
 
+export interface StreetScenery {
+  /** Night-market group. Hidden before 18:00. */
+  stalls: THREE.Group;
+  stallMeshes: Map<number, ShopVisual>;
+}
+
+const COL_H = 3.15;
+
+function arcadeSlabs(): THREE.BufferGeometry[] {
+  const parts: THREE.BufferGeometry[] = [];
+  const y = ARCADE_RAISE / 2;
+  const h = ARCADE_RAISE;
+  const span = (z0: number, z1: number, side: -1 | 1): void => {
+    const cx = side * (STREET_HALF + ARCADE_DEPTH / 2);
+    parts.push(box(ARCADE_DEPTH, h, z1 - z0, cx, y, (z0 + z1) / 2, 0x6d7370));
+    // Lip at the carriageway edge so the 15 cm step reads from the street.
+    parts.push(box(0.08, h, z1 - z0, side * STREET_HALF, y, (z0 + z1) / 2, 0x8a8478));
+    // Ceiling, then the upper floors that actually cover the walkway.
+    parts.push(box(ARCADE_DEPTH + 0.12, 0.22, z1 - z0, cx, COL_H, (z0 + z1) / 2, 0x7c756c));
+    parts.push(box(ARCADE_DEPTH, 3.5, z1 - z0, cx - side * 0.04, COL_H + 0.22 + 1.75, (z0 + z1) / 2, 0x8a8680));
+    parts.push(box(ARCADE_DEPTH + 0.2, 0.35, z1 - z0, cx, COL_H + 3.9, (z0 + z1) / 2, 0x5e4130));
+  };
+  span(STREET_Z0, STREET_Z1, 1);
+  // West arcade is broken by the alley mouth.
+  span(STREET_Z0, -ALLEY_WIDTH / 2, -1);
+  span(ALLEY_WIDTH / 2, STREET_Z1, -1);
+  return parts;
+}
+
+function columnRun(): THREE.BufferGeometry[] {
+  const parts: THREE.BufferGeometry[] = [];
+  const step = 4.4;
+  for (let z = STREET_Z0 + 1.2; z < STREET_Z1 - 0.6; z += step) {
+    for (const side of [-1, 1] as const) {
+      if (side < 0 && Math.abs(z) < ALLEY_WIDTH / 2 + 0.4) continue;
+      const x = side * STREET_HALF;
+      parts.push(box(0.32, COL_H, 0.32, x, COL_H / 2, z, 0x9c968b));
+      parts.push(box(0.48, 0.16, 0.48, x, COL_H - 0.08, z, 0xb7b1a6));
+    }
+  }
+  return parts;
+}
+
+function barrierRun(): THREE.BufferGeometry[] {
+  const parts: THREE.BufferGeometry[] = [];
+  for (const z of [STREET_Z0 - 0.2, STREET_Z1 + 0.2]) {
+    parts.push(box(36, 0.08, 0.08, 0, 0.95, z, 0xd5d8de));
+    parts.push(box(36, 0.08, 0.08, 0, 0.55, z, 0xd5d8de));
+    for (let x = -16; x <= 16; x += 2.4) {
+      parts.push(box(0.08, 1.15, 0.08, x, 0.58, z, 0x9aa0a8));
+    }
+  }
+  return parts;
+}
+
+function alleyClutter(city: NanningCity): THREE.BufferGeometry[] {
+  const a = city.alley;
+  const parts: THREE.BufferGeometry[] = [];
+  // Bins and a dead-end wall, so the alley reads as a place and not a gap.
+  parts.push(box(0.35, 2.4, ALLEY_WIDTH, a.minX, 1.2, 0, 0x5c5852));
+  parts.push(box(0.7, 0.9, 0.55, a.cx, 0.45, -0.7, 0x2f6a3a));
+  parts.push(box(0.7, 0.9, 0.55, a.cx - 1.2, 0.45, 0.6, 0x2a3f55));
+  return parts;
+}
+
+function stallVisuals(city: NanningCity, parent: THREE.Group): Map<number, ShopVisual> {
+  const map = new Map<number, ShopVisual>();
+  for (const unit of city.shops) {
+    if (!unit.nightOnly) continue;
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x1b2228,
+      emissive: 0xffb768,
+      emissiveIntensity: 0,
+      roughness: 0.4,
+    });
+    const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(unit.def), toneMapped: false });
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.4), signMat);
+    // Face the middle of the street. Plane normal +Z, so ±π/2 turns it onto ±X.
+    const face = unit.x < 0 ? Math.PI / 2 : -Math.PI / 2;
+    sign.position.set(unit.x, 2.15, unit.z);
+    sign.rotation.y = face;
+    parent.add(sign);
+    const neonMat = new THREE.MeshBasicMaterial({
+      color: unit.def.signColor,
+      toneMapped: false,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const neon = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.06), neonMat);
+    neon.position.set(unit.x, 1.88, unit.z);
+    neon.rotation.y = face;
+    parent.add(neon);
+    map.set(unit.building, { sign, signMat, neon: neonMat, glass, litMats: [neonMat] });
+  }
+  return map;
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
-export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
-  // ── Ground surfaces ───────────────────────────────────────────────────
+export function addNanningScenery(scene: THREE.Scene, city: NanningCity): StreetScenery {
   const stoneTex = bluestoneTexture();
   const TINT: Record<string, number | null> = { bluestone: null, asphalt: 0x22242a, plaza: 0xbfb8a8, riverside: 0xa8a396 };
   for (const q of city.surfaceQuads) {
-    let mat: THREE.MeshStandardMaterial;
-    if (TINT[q.kind] !== null && TINT[q.kind] !== undefined) {
-      mat = new THREE.MeshStandardMaterial({ color: TINT[q.kind]!, roughness: 0.98 });
+    let material: THREE.MeshStandardMaterial;
+    const tint = TINT[q.kind];
+    if (tint !== null && tint !== undefined) {
+      material = new THREE.MeshStandardMaterial({ color: tint, roughness: 0.98 });
     } else {
-      // Fresh texture clone per patch: the tiling must follow each quad's real
-      // size, and sharing one repeat across differently-sized quads stretches it.
       const t = stoneTex.clone();
       t.needsUpdate = true;
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.repeat.set(q.w / 6, q.d / 6);
-      mat = new THREE.MeshStandardMaterial({
+      material = new THREE.MeshStandardMaterial({
         map: t,
-        color: TINT[q.kind] ?? 0xffffff,
+        color: 0xffffff,
         roughness: 0.93,
         metalness: 0.02,
       });
     }
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(q.w, q.d), mat);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(q.w, q.d), material);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(q.x, 0.03, q.z);
+    mesh.position.set(q.x, q.kind === 'bluestone' && Math.abs(q.x) > 1 ? 0.02 : 0.04, q.z);
     mesh.receiveShadow = true;
     scene.add(mesh);
   }
 
-  // ── 邕江 ──────────────────────────────────────────────────────────────
-  const wTex = waterTexture();
-  wTex.repeat.set(24, 24);
-  const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_HALF * 2.4, 320),
-    new THREE.MeshStandardMaterial({
-      map: wTex,
-      color: 0x2c5a5e,
-      roughness: 0.16,
-      metalness: 0.62,
-      transparent: true,
-      opacity: 0.95,
-    }),
+  const dress = new THREE.Mesh(
+    merge([...arcadeSlabs(), ...columnRun(), ...barrierRun(), ...alleyClutter(city)]),
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0.04 }),
   );
-  water.rotation.x = -Math.PI / 2;
-  water.position.set(0, -0.35, RIVER_Z + 160);
-  scene.add(water);
-  // Scroll the ripples so the river reads as moving even when the camera is still.
-  const waterMat = water.material as THREE.MeshStandardMaterial;
-  const wm = waterMat.map as THREE.Texture;
-  window.setInterval(() => {
-    wm.offset.y = (wm.offset.y - 0.0025) % 1;
-    wm.offset.x = (wm.offset.x + 0.0012) % 1;
-  }, 40);
-  // Emissive sheen on the water at night — the 邕江夜游 look.
-  const sheen = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_HALF * 2.4, 320),
-    new THREE.MeshBasicMaterial({ color: 0x1a4a52, transparent: true, opacity: 0.22, depthWrite: false }),
-  );
-  sheen.rotation.x = -Math.PI / 2;
-  sheen.position.set(0, -0.3, RIVER_Z + 160);
-  scene.add(sheen);
+  dress.castShadow = true;
+  dress.receiveShadow = true;
+  scene.add(dress);
 
-  // River bank walls so you can't wade out
-  scene.add(bridgeGroup());
-
-  // ── 夜市 stalls ───────────────────────────────────────────────────────
+  const stallRoot = new THREE.Group();
+  stallRoot.name = 'nn-stalls';
   if (city.stalls.length) {
     const parts: THREE.BufferGeometry[] = [];
     for (const s of city.stalls) parts.push(...stallGeometry(s.x, s.z, s.rot, s.hue));
@@ -343,19 +318,17 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
     );
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    scene.add(mesh);
+    stallRoot.add(mesh);
   }
+  const stallMeshes = stallVisuals(city, stallRoot);
+  scene.add(stallRoot);
 
-  // ── 百叶纸灯笼 garlands over the night market ──────────────────────────
-  // The reference photo is unmistakable: ribbed paper lanterns in cream, pink,
-  // purple and stripe, on sagging wires across the alley. These are the single
-  // strongest night read of the whole district, so they are real geometry (an
-  // emissive lathe shape) rather than the generic bulbs the base game used.
+  addLanterns(scene);
+  return { stalls: stallRoot, stallMeshes };
+}
+
+function addLanterns(scene: THREE.Scene): void {
   const LANTERN_HUES = [0xf3e3c2, 0xf0c9c2, 0xd8c4e2, 0xe8d7a8, 0xdfa9a0, 0xf6efe0];
-  // Eight shared materials rather than one per lantern: 290 unique materials is
-  // 290 shader binds, and the flicker still reads as unsynchronised.
-  const lanternMats = LANTERN_HUES.map((h) => new THREE.MeshBasicMaterial({ color: h, toneMapped: false }));
-  // Paper body + tassel in one geometry so each lantern is a single mesh.
   const lanternGeo = new THREE.LatheGeometry(
     [
       new THREE.Vector2(0.02, 0),
@@ -365,13 +338,11 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
       new THREE.Vector2(0.14, 0.62),
       new THREE.Vector2(0.02, 0.7),
     ],
-    9,
+    8,
   );
-  const tasselGeo = new THREE.CylinderGeometry(0.018, 0.005, 0.3, 4);
+  const tasselGeo = new THREE.CylinderGeometry(0.018, 0.005, 0.28, 4);
   const wireMat = new THREE.LineBasicMaterial({ color: 0x141414 });
-  // ~290 lanterns as 2 InstancedMeshes with per-instance colour, not 580
-  // individual meshes with 290 materials.
-  const MAX_L = 420;
+  const MAX_L = 160;
   const lanternMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
   const bodyI = new THREE.InstancedMesh(lanternGeo, lanternMat, MAX_L);
   const tasselI = new THREE.InstancedMesh(tasselGeo, lanternMat, MAX_L);
@@ -381,14 +352,19 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
   const ldum = new THREE.Object3D();
   const lcol = new THREE.Color();
   let li = 0;
-  const addLantern = (x: number, y: number, z: number, sc: number, yaw: number): void => {
+  let lseed = 5;
+  const lrnd = (): number => {
+    lseed = (lseed * 1664525 + 1013904223) >>> 0;
+    return lseed / 4294967296;
+  };
+  const addLantern = (x: number, y: number, z: number, sc: number): void => {
     if (li >= MAX_L) return;
     ldum.position.set(x, y, z);
     ldum.scale.setScalar(sc);
-    ldum.rotation.set(0, yaw, 0);
+    ldum.rotation.set(0, 0, 0);
     ldum.updateMatrix();
     bodyI.setMatrixAt(li, ldum.matrix);
-    ldum.position.set(x, y - 0.78 * sc - 0.15, z);
+    ldum.position.set(x, y - 0.72 * sc, z);
     ldum.updateMatrix();
     tasselI.setMatrixAt(li, ldum.matrix);
     lcol.setHex(LANTERN_HUES[Math.floor(lrnd() * LANTERN_HUES.length)]);
@@ -396,46 +372,24 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
     tasselI.setColorAt(li, lcol);
     li++;
   };
-  let lseed = 5;
-  const lrnd = (): number => {
-    lseed = (lseed * 1664525 + 1013904223) >>> 0;
-    return lseed / 4294967296;
-  };
 
-  for (let line = 0; line < 9; line++) {
-    const z = -46 + line * 7.5;
+  // Garlands across the night-market stretch only.
+  const lines = 8;
+  for (let line = 0; line < lines; line++) {
+    const z = MIDDLE_Z0 + 8 + ((MIDDLE_Z1 - MIDDLE_Z0 - 16) * line) / (lines - 1);
     const pts: THREE.Vector3[] = [];
-    const sag = 1.3 + lrnd() * 0.7;
-    const y0 = 5.6 + lrnd() * 0.7;
-    for (let i = 0; i <= 14; i++) {
-      const t = i / 14;
-      const x = -10.5 + t * 21;
+    const sag = 0.7;
+    const y0 = 5.4;
+    const n = 10;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const x = -(STREET_HALF + 1.2) + t * (STREET_HALF * 2 + 2.4);
       pts.push(new THREE.Vector3(x, y0 - Math.sin(t * Math.PI) * sag, z));
     }
     scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wireMat));
-
-    for (let i = 1; i < 14; i++) {
+    for (let i = 1; i < n; i++) {
       const p = pts[i];
-      const sc = 0.72 + lrnd() * 0.4;
-      addLantern(p.x + (lrnd() - 0.5) * 0.5, p.y - 0.82 * sc, p.z + (lrnd() - 0.5) * 0.5, sc, lrnd() * Math.PI);
-    }
-  }
-
-  // A second, sparser set down the 三街两巷 lanes, where the reference photo
-  // shows the same garlands over a much narrower alley.
-  for (const lz of [-70, -96]) {
-    for (let line = 0; line < 4; line++) {
-      const x = -20 - line * 13;
-      const pts: THREE.Vector3[] = [];
-      for (let i = 0; i <= 8; i++) {
-        const t = i / 8;
-        pts.push(new THREE.Vector3(x, 5.2 - Math.sin(t * Math.PI) * 0.9, lz - 6 + t * 12));
-      }
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wireMat));
-      for (let i = 1; i < 8; i++) {
-        const p = pts[i];
-        addLantern(p.x, p.y - 0.7, p.z, 0.6 + lrnd() * 0.25, lrnd() * Math.PI);
-      }
+      addLantern(p.x, p.y - 0.55, p.z, 0.55 + lrnd() * 0.25);
     }
   }
 
@@ -444,19 +398,13 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
   if (bodyI.instanceColor) bodyI.instanceColor.needsUpdate = true;
   if (tasselI.instanceColor) tasselI.instanceColor.needsUpdate = true;
   scene.add(bodyI, tasselI);
-  void lanternMats;
 }
 
 /**
- * Called every frame from the main loop.
- *
- * `scene.userData.bulbs` holds the SHARED lantern materials, not meshes — there
- * are ~290 lanterns on ~6 materials, and the flicker is per-material. Reading
- * `.material` off these used to throw `undefined.color` and kill the rAF loop on
- * its first frame.
+ * Show or hide the night market. `hour` is 0–24 from the game clock.
  */
-export function updateNanningScenery(_scene: THREE.Scene, _t: number, _daylight: number): void {
-  // The lanterns are a single instanced mesh with a MeshBasicMaterial, so bloom
-  // in Scene.ts already does the glowing. No per-frame flicker pass needed, and
-  // a multiplicative tint on a shared material would decay to black anyway.
+export function updateNanningScenery(scene: THREE.Scene, hour: number, _daylight: number): void {
+  const stalls = scene.getObjectByName('nn-stalls');
+  if (stalls) stalls.visible = nightMarketOpen(hour);
 }
+
