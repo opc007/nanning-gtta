@@ -10,6 +10,7 @@
 import { AREAS, type AreaDef } from '../nanning/data';
 import type { ShopState, Wallet } from '../nanning/shops';
 import type { AreaZone } from '../nanning/layout';
+import type { Missions } from '../nanning/missions';
 
 const GOLD = '#ffd24a';
 const RED = '#ff5a4a';
@@ -38,6 +39,15 @@ export class NnHUD {
   private readonly panelItems: HTMLElement;
   private readonly panelMoney: HTMLElement;
   private readonly statEl: HTMLElement;
+  private readonly missionBox: HTMLElement;
+  private readonly missionTitle: HTMLElement;
+  private readonly missionGiver: HTMLElement;
+  private readonly missionObjs: HTMLElement;
+  private readonly missionReward: HTMLElement;
+  private readonly wpEl: HTMLElement;
+  private readonly wpArrow: HTMLElement;
+  private readonly wpText: HTMLElement;
+  private lastMissionSig = '';
 
   private openShop: ShopState | null = null;
   private lastWallet: Wallet | null = null;
@@ -122,6 +132,75 @@ export class NnHUD {
     hint.textContent = 'ESC / E 关闭　·　按 E 关门出去';
     this.panel.append(this.panelTitle, this.panelMoney, this.panelItems, hint);
     root.appendChild(this.panel);
+
+    // ── Mission panel, top-left under the wanted stars ──────────────────
+    this.missionBox = document.createElement('div');
+    this.missionBox.style.cssText =
+      `position:absolute;left:20px;top:126px;width:246px;padding:12px 14px;${PANEL}`;
+    this.missionTitle = document.createElement('div');
+    this.missionTitle.style.cssText = 'font-size:15px;font-weight:800;color:#f3ece0;letter-spacing:1px;';
+    this.missionGiver = document.createElement('div');
+    this.missionGiver.style.cssText = `font-size:10px;opacity:.55;margin-top:2px;color:${GOLD};letter-spacing:1px;`;
+    this.missionObjs = document.createElement('div');
+    this.missionObjs.style.cssText = 'margin-top:9px;display:flex;flex-direction:column;gap:5px;';
+    this.missionReward = document.createElement('div');
+    this.missionReward.style.cssText = `font-size:11px;margin-top:9px;opacity:.8;color:${GOLD};`;
+    this.missionBox.append(this.missionTitle, this.missionGiver, this.missionObjs, this.missionReward);
+    root.appendChild(this.missionBox);
+
+    // ── Waypoint arrow + distance, bottom-left above the wallet ─────────
+    this.wpEl = document.createElement('div');
+    this.wpEl.style.cssText =
+      `position:absolute;left:20px;bottom:96px;display:flex;align-items:center;gap:8px;` +
+      `font-size:12px;${PANEL}padding:7px 12px;display:none;`;
+    this.wpArrow = document.createElement('div');
+    this.wpArrow.style.cssText = `font-size:17px;color:${GOLD};line-height:1;`;
+    this.wpText = document.createElement('div');
+    this.wpEl.append(this.wpArrow, this.wpText);
+    root.appendChild(this.wpEl);
+  }
+
+  /**
+   * Objective list. Rebuilt only when the text changes — `innerHTML` every frame
+   * at 60 fps is a surprisingly expensive way to GC.
+   */
+  setMission(missions: Missions): void {
+    if (!missions.active) {
+      this.missionBox.style.display = 'none';
+      this.wpEl.style.display = 'none';
+      this.lastMissionSig = '';
+      return;
+    }
+    this.missionBox.style.display = 'block';
+    this.wpEl.style.display = 'flex';
+    const lines = missions.objectiveLines();
+    const sig = `${missions.title()}|${lines.map((l) => l.got + '/' + l.need).join(',')}`;
+    if (sig !== this.lastMissionSig) {
+      this.lastMissionSig = sig;
+      this.missionTitle.textContent = `📋 ${missions.title()}`;
+      this.missionGiver.textContent = `委托人 · ${missions.giver()}`;
+      this.missionObjs.innerHTML = lines
+        .map(
+          (l) =>
+            `<div style="display:flex;gap:6px;font-size:11.5px;line-height:1.45">` +
+            `<span style="color:${l.got >= l.need ? JADE : GOLD}">${l.got >= l.need ? '✔' : '▸'}</span>` +
+            `<span style="opacity:${l.got >= l.need ? 0.55 : 1}">${l.label}</span>` +
+            `<span style="margin-left:auto;opacity:.7">${l.got}/${l.need}</span></div>`,
+        )
+        .join('');
+      this.missionReward.textContent = missions.brief();
+    }
+  }
+
+  setWaypoint(dist: number, relAngle: number, camYaw: number): void {
+    if (!Number.isFinite(dist)) {
+      this.wpEl.style.display = 'none';
+      return;
+    }
+    this.wpEl.style.display = 'flex';
+    this.wpText.textContent = `${Math.round(dist)} m`;
+    // Rotate the arrow by the bearing relative to where the camera is looking.
+    this.wpArrow.style.transform = `rotate(${(((relAngle - camYaw) * 180) / Math.PI).toFixed(0)}deg)`;
   }
 
   get isPanelOpen(): boolean {

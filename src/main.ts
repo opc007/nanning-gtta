@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { DEFAULT_CITY, type City } from './world/City';
 import { generateNanningCity, type NanningCity } from './nanning/layout';
-import { makeLingnan, makeFactory, type ArchMesh } from './render/nnArch';
-import { makeBlock, makeZhonggulou as makeLandmark } from './render/qilou';
+import { buildModernDistrict, addDistrictClutter, addBackgroundBuildings, type ModernDistrict } from './render/modernCity';
 import { addNanningScenery, updateNanningScenery, addBanyans } from './nanning/scenery';
 import { Shops } from './nanning/shops';
 import { NnHUD } from './ui/NnHUD';
+import { Missions, debtTargets, tagForShop } from './nanning/missions';
+import { Crowd } from './nanning/crowd';
 
 import { StreamedWorld } from './world/StreamedWorld';
 import { SceneEnv } from './render/Scene';
@@ -110,6 +111,11 @@ const env = new SceneEnv(container, city, {
 
 let shops: Shops | null = null;
 let camBlockers: { x: number; z: number; r: number }[] = [];
+let modernRef: ModernDistrict | null = null;
+let missions: Missions | null = null;
+let crowd: Crowd | null = null;
+/** Debt NPC currently in reach, refreshed each frame. */
+let debtor: ReturnType<Crowd['nearestDebtor']> = null;
 
 if (streamedWorld) {
   // env.scene now exists; load the initial ring around spawn (fires the hooks).
@@ -122,33 +128,37 @@ if (streamedWorld) {
   if (nanning) {
     // Replace the base box-buildings with real architecture: 骑楼 runs, a
     // 城楼 landmark, and the block skyline behind.
-    const archMeshes = new Map<number, ArchMesh>();
-    for (let i = 0; i < nanning.buildings.length; i++) {
-      const b = nanning.buildings[i];
-      const shop = b.shopId ? nanning.shops.find((s) => s.building === i)?.def : undefined;
-      if (b.kind === 'lingnan' || b.kind === 'shophouse') {
-        const a = makeLingnan(b, i, shop);
-        archMeshes.set(i, a);
-        env.scene.add(a.group);
-      } else if (b.kind === 'factory') {
-        env.scene.add(makeFactory(b));
-      } else if (b.kind === 'landmark') {
-        env.scene.add(makeLandmark(b));
-      } else {
-        env.scene.add(makeBlock(b));
-      }
-    }
+    const district = buildModernDistrict(nanning.buildings, nanning.shops, config.seed);
+    env.scene.add(district.group);
+    addDistrictClutter(env.scene, district.clutterTargets, config.seed);
+    addBackgroundBuildings(env.scene, nanning.buildings, config.seed + 4);
+    modernRef = district;
     addBanyans(env.scene, nanning.props);
     // Banyan canopies are soft blockers for the camera: ~4 m of foliage per tree.
     // Applied after `follow` exists (it's created further down, once the scene is up).
     camBlockers = nanning.props.map((p) => ({ x: p.x, z: p.z, r: 3.6 }));
     addNanningScenery(env.scene, nanning);
-    shops = new Shops(nanning, archMeshes, env.scene);
+    shops = new Shops(nanning, district, env.scene);
+    missions = new Missions(env.scene);
+    crowd = new Crowd(env.scene, debtTargets(nanning), touch ? 8 : 16);
   }
 }
 
 const avatar = makePed(0x2266dd);
 env.scene.add(avatar);
+
+// Debug handle. Cheap to keep, and the headless smoke test asserts against it —
+// which is the only reliable way to tell "the scene is empty" apart from "the
+// scene is dark but fine".
+(globalThis as unknown as Record<string, unknown>).__nn = {
+  get scene() { return env.scene; },
+  get camera() { return env.camera; },
+  get city() { return city; },
+  get player() { return player; },
+  get district() { return modernRef; },
+  get shops() { return shops; },
+  get loop() { return loop; },
+};
 
 // Nanning overlay: wallet / satiety / area cards / the buy panel. Sits on top of
 // the base HUD rather than replacing it.
@@ -161,7 +171,11 @@ if (nanning) {
       if (!ev || !hud) return;
       hud.toast(ev.text, ev.kind === 'too-poor' ? '#ff5a4a' : '#2ee6a8');
       sfx?.footstep();
-      if (ev.kind === 'bought' && shops) hud.toast(shops.randomEatLine(), '#ffd24a');
+      if (ev.kind !== 'bought' || !shop) return;
+      hud.toast(shops?.randomEatLine() ?? '', '#ffd24a');
+      const u = shop.unit;
+      const payout = missions?.feed({ kind: tagForShop(u.def.kind), shopKind: u.def.kind, shopId: u.id });
+      if (payout) completeMission(payout);
     },
     onClose: () => nnHud?.closePanel(),
   });
@@ -169,17 +183,18 @@ if (nanning) {
 
 // The 满洲窗 and shopfront neon are the night glow of the whole district, so they
 // need the same daylight response the base game's windows get.
-let nnMats: ArchMesh[] = [];
-if (nanning) {
-  nnMats = shops ? shops.states.map((s) => s.mesh) : [];
-}
+/**
+ * The day/night ramp. Shop signs, neon strips and shopfront glazing all live on
+ * this curve; bloom in Scene.ts then does the optical work on top. This is the
+ * single most important function for making 19:00 look like a lit street.
+ */
 function applyNanningDaylight(d: number): void {
-  const lit = 1 - 0.94 * d;
-  for (const m of nnMats) {
-    if (m.manzhouMat) m.manzhouMat.emissiveIntensity = (m.brokenManzhou ?? 0.05) + 1.3 * lit;
-    if (m.neonMat) m.neonMat.opacity = 0.12 + 0.78 * lit;
-    // 挂壁灯笼: pure on/off, which is what makes the night street read.
-    for (const lm of m.lanternMats) lm.color.setRGB(1, 0.85, 0.63).multiplyScalar(0.25 + 0.75 * lit);
+  const lit = 1 - 0.95 * d;
+  for (const m of modernRef?.glowMats ?? []) {
+    if (m.transparent) m.opacity = 0.1 + 0.85 * lit;
+  }
+  for (const m of modernRef?.windowMats ?? []) {
+    m.emissiveIntensity = 0.02 + 1.15 * lit;
   }
 }
 
@@ -510,6 +525,17 @@ function update(dt: number): void {
       nnHud.closePanel();
     } else if (mode === 'foot' && shops?.focused) {
       nnHud?.togglePanel(shops.focused);
+    } else if (mode === 'foot' && debtor) {
+      // 收租: the whole point of GTA's debt collection is that the person
+      // handing over the money is a character, so they get a line and a walk-off.
+      const got = crowd?.collect(debtor) ?? 0;
+      if (got > 0 && shops) {
+        shops.wallet.money += got;
+        nnHud?.toast(`收到 ${debtor.name} 嘅 ¥${got}`, '#ffd24a');
+        const payout = missions?.feed({ kind: 'talk', debt: 1 });
+        if (payout) completeMission(payout);
+      }
+      debtor = null;
     } else {
       toggleVehicle();
     }
@@ -537,6 +563,10 @@ function update(dt: number): void {
       if (ev) {
         nnHud?.toast(ev.text, ev.kind === 'broke' ? '#ff5a4a' : ev.kind === 'hit' ? '#ff8a5a' : '#2ee6a8');
         if (ev.heat > 0) heat = Math.min(100, heat + ev.heat);
+        if (ev.kind === 'broke') {
+          const payout = missions?.feed({ kind: 'smash' });
+          if (payout) completeMission(payout);
+        }
       } else {
         peds.punch(player.x, player.z, dirX, dirZ);
       }
@@ -652,6 +682,19 @@ function render(alpha: number, frameDt: number): void {
     shops.update(frameDt, player.x, player.z);
     nnHud.update(frameDt, shops.wallet, player.x, player.z, mode === 'foot' ? shops.focused : null);
   }
+  if (missions) {
+    missions.render(timeOfDay * 40);
+    nnHud?.setMission(missions);
+    nnHud?.setWaypoint(
+      mode === 'foot' ? missions.distanceTo(player.x, player.z) : Infinity,
+      missions.angleTo(player.x, player.z),
+      follow.yaw,
+    );
+    const d = mode === 'foot' ? crowd?.nearestDebtor(player.x, player.z) ?? null : null;
+    debtor = d;
+  }
+  crowd?.update(frameDt, player.x, player.z, heat, shops?.wallet.smashed ?? 0);
+  crowd?.render(env.camera);
 
   const driving = mode === 'driving';
   if (driving) {
@@ -771,6 +814,13 @@ window.__game = {
   peds,
   city,
 };
+
+function completeMission(p: { title: string; reward: number; line: string }): void {
+  if (shops && p.reward > 0) shops.wallet.money += p.reward;
+  nnHud?.toast(`✅ ${p.title}  完成！${p.reward > 0 ? ` +¥${p.reward}` : ''}`, '#2ee6a8');
+  nnHud?.toast(p.line, '#ffd24a');
+  sfx?.enterCar();
+}
 
 const loop = new GameLoop(update, render);
 

@@ -25,7 +25,9 @@ describe('car profiles', () => {
       expect(ids.has(p.id)).toBe(false); // unique
       ids.add(p.id);
     }
-    expect(PROFILES.length).toBe(7); // the seven street makes/models
+    // Seven street makes/models + the 电瓶车. The count is a duplicate-guard,
+    // not a spec: bump it when a vehicle is added on purpose.
+    expect(PROFILES.length).toBe(8);
   });
 
   it('class hierarchy holds: truck slower than sedan slower than sports slower than super', () => {

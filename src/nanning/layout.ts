@@ -55,7 +55,7 @@ export const ROADS: RoadDef[] = [
   { axis: 'z', fixed: 0, from: 118, to: 244, width: 20, dir: 0 }, // 南宁大桥
 ];
 
-export type BuildingKind = 'lingnan' | 'factory' | 'block' | 'shophouse' | 'landmark';
+export type BuildingKind = 'modern' | 'arcade' | 'factory' | 'block' | 'shophouse' | 'landmark';
 
 export interface NanningBuilding extends Building {
   kind: BuildingKind;
@@ -140,7 +140,7 @@ export function generateNanningCity(seed = 1945): NanningCity {
   const surfaceQuads: NanningCity['surfaceQuads'] = [];
 
   // ── Ground surfaces ───────────────────────────────────────────────────────
-  surfaceQuads.push({ x: 0, z: (QILOU_N0 + QILOU_N1) / 2, w: 18, d: QILOU_N1 - QILOU_N0, kind: 'bluestone' });
+  surfaceQuads.push({ x: 0, z: (QILOU_N0 + QILOU_N1) / 2, w: 18, d: QILOU_N1 - QILOU_N0, kind: 'asphalt' });
   surfaceQuads.push({ x: 0, z: (PLAZA_Z0 + PLAZA_Z1) / 2, w: 46, d: PLAZA_Z1 - PLAZA_Z0, kind: 'plaza' });
   surfaceQuads.push({ x: 0, z: 100, w: 40, d: 40, kind: 'riverside' });
   for (const r of ROADS) {
@@ -153,61 +153,49 @@ export function generateNanningCity(seed = 1945): NanningCity {
     );
   }
 
-  // ── The qilou run: both sides of 中山路 ────────────────────────────────────
-  // A shop slot is ~7.5 m of frontage. The arcade (ground floor) is open and
-  // walkable; upper floors overhang to the column line and carry the texture.
-  const SLOT = 7.5;
+  // ── 朝阳商圈: the modern commercial street, and the main axis ───────────
+  // Wide asphalt, modern blocks, e-bike ranks on the pavement. This is present-
+  // day Nanning, not a period set.
+  const SLOT = 8.4; // shopfront frontage, metres
   let shopCursor = 0;
-
-  const addQilouRow = (side: -1 | 1, z0: number, z1: number): void => {
-    const nx = -side; // points from the building back toward the street
+  const addModernRun = (side: -1 | 1, z0: number, z1: number): void => {
+    const nx = -side;
     const length = z1 - z0;
     const slots = Math.max(1, Math.round(length / SLOT));
     const slotW = length / slots;
-
     for (let i = 0; i < slots; i++) {
       const zc = z0 + (i + 0.5) * slotW;
-      const depth = QILOU_DEPTH;
+      const depth = QILOU_DEPTH + 4;
       const cx = side * (QILOU_FACE + depth / 2);
-      const floors = 2 + Math.floor(rand() * 2); // 2–3 storeys, as most of 中山路 is
-      const height = 3.6 + floors * 3.2;
-      // Gray-blue qilou brick with per-slot tint jitter so the run isn't cloned.
-      const base = 0x8d9299;
-      const f = 0.9 + rand() * 0.2;
-      const ch = (s: number): number => {
-        const v = Math.min(255, Math.max(0, Math.round(((base >> s) & 0xff) * f)));
-        return v;
-      };
-      const color = (ch(16) << 16) | (ch(8) << 8) | ch(0);
-
-      // A shop every other slot in the prime stretch; always one in the night market.
+      const floors = 4 + Math.floor(rand() * 3);
+      const height = 4.6 + floors * 3.4;
+      // 奶茶/酸嘢 always get a unit in the prime stretch; elsewhere most units rent.
       const wantShop =
-        zc > NIGHTMARKET_Z0 - 6 && zc < NIGHTMARKET_Z1 + 6 ? rand() < 0.85 : rand() < 0.45;
+        zc > NIGHTMARKET_Z0 - 30 && zc < NIGHTMARKET_Z1 + 30 ? rand() < 0.82 : rand() < 0.4;
       const shop = wantShop ? SHOPS[shopCursor++ % SHOPS.length] : undefined;
-
       const b: NanningBuilding = {
         cx,
         cz: zc,
         width: depth,
         depth: slotW,
         height,
-        color,
-        style: 'brick',
-        kind: 'lingnan',
+        color: 0xffffff,
+        style: 'concrete',
+        kind: 'modern',
         face: { x: nx, z: 0 },
         floors,
         shopId: shop?.id,
         slot: { index: i, offset: 0, width: slotW },
       };
+      (b as NanningBuilding & { facade?: string }).facade =
+        rand() < 0.28 ? 'redBrick' : rand() < 0.4 ? 'concrete' : 'plaster';
       buildings.push(b);
-      // Collider sits on the column line so the player can walk the arcade itself.
       colliders.push(rect(cx, zc, depth, slotW));
-
       if (shop) {
         shops.push({
           id: `${side < 0 ? 'w' : 'e'}-${i}`,
           def: shop,
-          x: side * (QILOU_FACE + 0.4),
+          x: side * (QILOU_FACE + 1.6),
           z: zc,
           nx,
           nz: 0,
@@ -220,10 +208,43 @@ export function generateNanningCity(seed = 1945): NanningCity {
     }
   };
 
-  addQilouRow(-1, QILOU_N0, NIGHTMARKET_Z0);
-  addQilouRow(-1, NIGHTMARKET_Z1, QILOU_N1);
-  addQilouRow(1, QILOU_N0, NIGHTMARKET_Z0);
-  addQilouRow(1, NIGHTMARKET_Z1, QILOU_N1);
+  addModernRun(-1, QILOU_N0, NIGHTMARKET_Z0);
+  addModernRun(-1, NIGHTMARKET_Z1, QILOU_N1);
+  addModernRun(1, QILOU_N0, NIGHTMARKET_Z0);
+  addModernRun(1, NIGHTMARKET_Z1, QILOU_N1);
+
+  // ── 三街两巷 old-town pocket: kept, but small. Two narrow arcade rows so the
+  //    map still has somewhere that feels like the reference photos.
+  {
+    const lanes = [
+      { z: -70, len: 46, ax: -14 },
+      { z: -98, len: 40, ax: -14 },
+    ];
+    for (const ln of lanes) {
+      for (let x = ln.ax; x > ln.ax - ln.len; x -= 6.5) {
+        for (const s of [-1, 1] as const) {
+          const cz = ln.z + s * 3.4;
+          const floors = 2 + (rand() < 0.5 ? 1 : 0);
+          const b: NanningBuilding = {
+            cx: x,
+            cz,
+            width: 6,
+            depth: 5.6,
+            height: 3.8 + floors * 3.2,
+            color: 0xffffff,
+            style: 'brick',
+            kind: 'arcade',
+            face: { x: 0, z: -s },
+            floors,
+          };
+          buildings.push(b);
+          colliders.push(rect(x, cz, 6, 5.6));
+        }
+      }
+    }
+  }
+  // Paving for the old-town pocket: bluestone, as in the reference photos.
+  surfaceQuads.push({ x: -34, z: -84, w: 46, d: 40, kind: 'bluestone' });
 
   // ── 夜市 stalls down the middle of the street ─────────────────────────────
   for (let z = NIGHTMARKET_Z0 + 2; z < NIGHTMARKET_Z1; z += 5.5) {

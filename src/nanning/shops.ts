@@ -14,7 +14,8 @@
 import * as THREE from 'three';
 import type { ShopUnit, NanningCity } from './layout';
 import { EAT_LOG } from './data';
-import { makeSignTexture, type ArchMesh } from '../render/nnArch';
+import { makeSignTexture } from '../render/nnArch';
+import type { ShopVisual, ModernDistrict } from '../render/modernCity';
 
 export const SHOP_MAX_HP = 100;
 const HIT_DAMAGE = 9;
@@ -22,7 +23,7 @@ const REACH = 3.2;
 
 export interface ShopState {
   unit: ShopUnit;
-  mesh: ArchMesh;
+  mesh: ShopVisual;
   hp: number;
   broken: boolean;
   /** Counts down after each hit; drives the red flash. */
@@ -61,7 +62,8 @@ export class Shops {
   private sparkPool: THREE.Points;
   private sparkTimer = 0;
 
-  constructor(city: NanningCity, meshes: Map<number, ArchMesh>, scene: THREE.Scene) {
+  constructor(city: NanningCity, district: ModernDistrict, scene: THREE.Scene) {
+    const meshes = district.shopMeshes;
     for (const unit of city.shops) {
       const mesh = meshes.get(unit.building);
       if (!mesh) continue;
@@ -159,16 +161,11 @@ export class Shops {
   }
 
   private breakShop(s: ShopState): void {
-    if (s.mesh.signMat) {
-      s.mesh.signMat.map = makeSignTexture(s.unit.def, true);
-      s.mesh.signMat.needsUpdate = true;
-    }
-    if (s.mesh.neonMat) s.mesh.neonMat.opacity = 0.05;
-    if (s.mesh.manzhouMat) {
-      s.mesh.manzhouMat.emissiveIntensity = 0.03;
-      s.mesh.brokenManzhou = 0.03; // applyNanningDaylight leaves it dark
-    }
-    for (const lm of s.mesh.lanternMats) lm.color.setRGB(0.2, 0.18, 0.16);
+    s.mesh.signMat.map = makeSignTexture(s.unit.def, true);
+    s.mesh.signMat.needsUpdate = true;
+    s.mesh.neon.opacity = 0.05;
+    s.mesh.glass.userData.broken = true;
+    s.mesh.glass.emissiveIntensity = 0.02;
   }
 
   /** Buy an item. Returns null if the purchase was rejected. */

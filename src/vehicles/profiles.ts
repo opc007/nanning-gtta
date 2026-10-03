@@ -16,7 +16,8 @@ export type VehicleClass =
   | 'muscle'
   | 'truck'
   | 'van'
-  | 'interceptor';
+  | 'interceptor'
+  | 'ebike';
 
 export interface CarProfile extends VehicleConfig {
   id: string;
@@ -32,6 +33,12 @@ const tune = (over: Partial<VehicleConfig>): VehicleConfig => ({ ...DEFAULT_VEHI
 
 /** The seven civilian makes/models you'll find on the street. */
 export const PROFILES: CarProfile[] = [
+  {
+    // 电动车: 60 kg, no cabin, top end around 45 km/h, and it changes direction
+    // instantly. The whole street in Nanning is full of these.
+    id: 'dianche', manufacturer: '五羊', model: '小电驴', class: 'ebike', shapeId: 'ebike', mass: 60,
+    ...tune({ maxSpeed: 13, enginePower: 11, brakePower: 22, gripNormal: 2.4, gripHandbrake: 0.8, drag: 0.6, turnRate: 3.1 }),
+  },
   {
     id: 'crown-vantage', manufacturer: 'Crown', model: 'Vantage', class: 'sedan', shapeId: 'sedan', mass: 1400,
     ...tune({}), // the balanced baseline

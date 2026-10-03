@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { City, Lane } from '../world/City';
 import { createRng } from '../core/rng';
 import { damp, lerp, angleLerp, safeApproachSpeed, leadTime, pursuitSpeed } from '../core/math';
-import { makeCar, CAR_SHAPES, type CarShape } from '../render/Assets';
+import { makeCar, makeEbike, EBIKE_SHAPE, CAR_SHAPES, type CarShape } from '../render/Assets';
 import { circleOverlap, nearestIndex, resolveCarImpulse, segmentBlocked, type Aabb } from './Collision';
 import { Debris } from './Debris';
 import { Smoke } from './Smoke';
@@ -19,6 +19,11 @@ import {
 import { PROFILES, INTERCEPTOR, PLAYER_PROFILE, type CarProfile } from '../vehicles/profiles';
 
 const shapeFor = (id: string): CarShape => CAR_SHAPES.find((s) => s.id === id) ?? CAR_SHAPES[0];
+
+/** E-bikes get their own body builder; everything else is a car silhouette. */
+function makeBody(color: number, shapeId: string) {
+  return shapeId === EBIKE_SHAPE.id ? makeEbike(color, EBIKE_SHAPE) : makeCar(color, shapeFor(shapeId));
+}
 
 /**
  * Every car — the one the player drives, ambient AI traffic, and abandoned
@@ -126,7 +131,7 @@ export class Vehicles {
   ) {
     this.smoke = new Smoke(scene);
     const cs = city.carSpawn;
-    this.spawn(scene, makeCar(PLAYER_COLOR, shapeFor(PLAYER_PROFILE.shapeId)), PLAYER_COLOR, PLAYER_PROFILE, cs?.x ?? city.center.x, cs?.z ?? city.center.z, cs?.heading ?? 0, 'parked', null, 0);
+    this.spawn(scene, makeBody(PLAYER_COLOR, PLAYER_PROFILE.shapeId), PLAYER_COLOR, PLAYER_PROFILE, cs?.x ?? city.center.x, cs?.z ?? city.center.z, cs?.heading ?? 0, 'parked', null, 0);
 
     const rng = createRng(seed);
     for (let i = 0; i < trafficCount && city.lanes.length > 0; i++) {
@@ -136,13 +141,13 @@ export class Vehicles {
       const z = lane.axis === 'z' ? along : lane.fixed;
       const color = rng.pick(TRAFFIC_COLORS);
       const profile = rng.pick(PROFILES);
-      this.spawn(scene, makeCar(color, shapeFor(profile.shapeId)), color, profile, x, z, 0, 'ai', lane, rng.range(10, 22));
+      this.spawn(scene, makeBody(color, profile.shapeId), color, profile, x, z, 0, 'ai', lane, rng.range(10, 22));
     }
 
     for (const spot of city.parkingSpots) {
       const color = rng.pick(TRAFFIC_COLORS);
       const profile = rng.pick(PROFILES);
-      this.spawn(scene, makeCar(color, shapeFor(profile.shapeId)), color, profile, spot.x, spot.z, spot.heading, 'parked', null, 0);
+      this.spawn(scene, makeBody(color, profile.shapeId), color, profile, spot.x, spot.z, spot.heading, 'parked', null, 0);
     }
 
     // A pool of idle police cars (hidden off-map) that a wanted level activates.

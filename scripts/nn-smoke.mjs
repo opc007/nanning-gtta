@@ -19,7 +19,10 @@ const browser = await chromium.launch({
 const fail = (m) => { console.error('SMOKE FAIL:', m); process.exitCode = 1; };
 
 try {
-  const page = await browser.newPage({ viewport: { width: 1400, height: 800 } });
+  // swiftshader is a software rasteriser: a 1400x800 frame with this many materials
+// takes seconds, and the default 30 s screenshot action budget is not enough.
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+page.setDefaultTimeout(120000);
   const errors = [];
   const IGNORE = /favicon|404/;
   page.on('console', (m) => m.type() === 'error' && !IGNORE.test(m.text()) && errors.push(m.text()));
@@ -48,7 +51,9 @@ try {
   if (errors.length) fail('console errors:\n  ' + errors.slice(0, 6).join('\n  '));
 
   // Prove the frame is not black.
-  const shot = await page.screenshot({ path: OUT });
+  const perf = await page.evaluate(() => ({ ft: +window.__nn.loop.lastFrameTime.toFixed(4) }));
+  console.log('frame seconds:', perf.ft, `(${(1 / Math.max(perf.ft, 1e-4)).toFixed(1)} fps headless)`);
+  const shot = await page.screenshot({ path: OUT, timeout: 120000 });
   const png = PNG.sync.read(shot);
   let lit = 0;
   for (let i = 0; i < png.data.length; i += 4 * 97) {
@@ -64,7 +69,7 @@ try {
   await page.keyboard.up('KeyW');
   await page.waitForTimeout(1200);
   const walk = process.env.OUT2 || 'nn-walk.png';
-  await page.screenshot({ path: walk });
+  await page.screenshot({ path: walk, timeout: 120000 });
   console.log('after walking ->', walk);
 
   const late = errors.length;

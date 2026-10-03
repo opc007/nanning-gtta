@@ -14,6 +14,7 @@ export class GameLoop {
   private readonly step: number;
   private readonly maxFrame: number;
   private accumulator = 0;
+  lastFrameTime = 0;
   private last = 0;
   private running = false;
   private paused = false;
@@ -51,11 +52,20 @@ export class GameLoop {
     if (!this.running) return;
     let frameTime = (now - this.last) / 1000;
     this.last = now;
+    // Exposed for the headless smoke test: a non-positive frameTime here is a
+    // clock bug that silently freezes every exponential damper in the game.
+    (this as unknown as { lastFrameTime: number }).lastFrameTime = frameTime;
     if (this.paused) {
       this.render(0, frameTime); // hold the current frame; advance no sim time
       requestAnimationFrame(this.frame);
       return;
     }
+    // Clamp BOTH ends. A negative frameTime (a clock that steps backwards, a
+    // tab restore, a start() whose timestamp predates the first rAF) reaches the
+    // exponential dampers as a factor > 1, which amplifies instead of smoothing
+    // and throws the camera to astronomical coordinates. Observed in headless
+    // Chromium after a long synchronous build.
+    if (!(frameTime > 0)) frameTime = 0;
     if (frameTime > this.maxFrame) frameTime = this.maxFrame;
     this.accumulator += frameTime;
 

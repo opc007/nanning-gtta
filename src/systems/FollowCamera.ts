@@ -9,7 +9,7 @@ export const CAR_CAM: FollowParams = { distance: 9, height: 4.2, lookHeight: 1.4
 // Nanning's whole subject is the street: the arcade overhead, the lantern
 // garlands, the shopfronts. A 5 m chase cam frames the player's shoulders and
 // none of that, so on foot the camera sits back far enough to read the block.
-export const FOOT_CAM: FollowParams = { distance: 12.5, height: 8.2, lookHeight: 1.8, stiffness: 7 };
+export const FOOT_CAM: FollowParams = { distance: 8.6, height: 4.4, lookHeight: 2.0, stiffness: 7 };
 
 /**
  * Smoothed chase camera. The desired pose sits behind the target along its
@@ -20,6 +20,7 @@ export class FollowCamera {
   private readonly look = new THREE.Vector3();
   /** Current pull-in factor, 1 = fully clear of occluders. */
   private clear = 1;
+  private snapped = false;
   /** Extra world positions that block the camera (tree canopies, awnings). */
   private softBlockers: { x: number; z: number; r: number }[] = [];
 
@@ -41,6 +42,17 @@ export class FollowCamera {
    * car stays centred even when travel diverges from heading (powerslides).
    */
   update(x: number, z: number, heading: number, p: FollowParams, dt: number, vx = 0, vz = 0): void {
+    // Snap on the first frame. Damping in from an arbitrary initial pose takes
+    // tens of seconds to converge, and during that time the player is looking at
+    // whatever the sky is doing.
+    if (!this.snapped) {
+      this.snapped = true;
+      this.clear = 1;
+      this.camera.position.set(x - Math.cos(heading) * p.distance, p.height, z + Math.sin(heading) * p.distance);
+      this.look.set(x, p.lookHeight, z);
+      this.camera.lookAt(this.look);
+      return;
+    }
     const fx = Math.cos(heading);
     const fz = -Math.sin(heading);
     const speed = Math.hypot(vx, vz);

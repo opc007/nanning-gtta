@@ -352,6 +352,10 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
   // strongest night read of the whole district, so they are real geometry (an
   // emissive lathe shape) rather than the generic bulbs the base game used.
   const LANTERN_HUES = [0xf3e3c2, 0xf0c9c2, 0xd8c4e2, 0xe8d7a8, 0xdfa9a0, 0xf6efe0];
+  // Eight shared materials rather than one per lantern: 290 unique materials is
+  // 290 shader binds, and the flicker still reads as unsynchronised.
+  const lanternMats = LANTERN_HUES.map((h) => new THREE.MeshBasicMaterial({ color: h, toneMapped: false }));
+  // Paper body + tassel in one geometry so each lantern is a single mesh.
   const lanternGeo = new THREE.LatheGeometry(
     [
       new THREE.Vector2(0.02, 0),
@@ -363,8 +367,35 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
     ],
     9,
   );
+  const tasselGeo = new THREE.CylinderGeometry(0.018, 0.005, 0.3, 4);
   const wireMat = new THREE.LineBasicMaterial({ color: 0x141414 });
-  const bulbs: THREE.Mesh[] = [];
+  // ~290 lanterns as 2 InstancedMeshes with per-instance colour, not 580
+  // individual meshes with 290 materials.
+  const MAX_L = 420;
+  const lanternMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
+  const bodyI = new THREE.InstancedMesh(lanternGeo, lanternMat, MAX_L);
+  const tasselI = new THREE.InstancedMesh(tasselGeo, lanternMat, MAX_L);
+  bodyI.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_L * 3), 3);
+  tasselI.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_L * 3), 3);
+  bodyI.frustumCulled = tasselI.frustumCulled = false;
+  const ldum = new THREE.Object3D();
+  const lcol = new THREE.Color();
+  let li = 0;
+  const addLantern = (x: number, y: number, z: number, sc: number, yaw: number): void => {
+    if (li >= MAX_L) return;
+    ldum.position.set(x, y, z);
+    ldum.scale.setScalar(sc);
+    ldum.rotation.set(0, yaw, 0);
+    ldum.updateMatrix();
+    bodyI.setMatrixAt(li, ldum.matrix);
+    ldum.position.set(x, y - 0.78 * sc - 0.15, z);
+    ldum.updateMatrix();
+    tasselI.setMatrixAt(li, ldum.matrix);
+    lcol.setHex(LANTERN_HUES[Math.floor(lrnd() * LANTERN_HUES.length)]);
+    bodyI.setColorAt(li, lcol);
+    tasselI.setColorAt(li, lcol);
+    li++;
+  };
   let lseed = 5;
   const lrnd = (): number => {
     lseed = (lseed * 1664525 + 1013904223) >>> 0;
@@ -385,24 +416,8 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
 
     for (let i = 1; i < 14; i++) {
       const p = pts[i];
-      const m = new THREE.MeshBasicMaterial({
-        color: LANTERN_HUES[Math.floor(lrnd() * LANTERN_HUES.length)],
-        toneMapped: false,
-      });
-      const l = new THREE.Mesh(lanternGeo, m);
       const sc = 0.72 + lrnd() * 0.4;
-      l.scale.setScalar(sc);
-      l.position.set(p.x + (lrnd() - 0.5) * 0.5, p.y - 0.82 * sc, p.z + (lrnd() - 0.5) * 0.5);
-      l.rotation.y = lrnd() * Math.PI;
-      scene.add(l);
-      bulbs.push(l);
-      // Tassel
-      const t = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.018, 0.005, 0.3, 4),
-        new THREE.MeshBasicMaterial({ color: 0xb03a2a }),
-      );
-      t.position.set(l.position.x, l.position.y - 0.78 * sc - 0.15, l.position.z);
-      scene.add(t);
+      addLantern(p.x + (lrnd() - 0.5) * 0.5, p.y - 0.82 * sc, p.z + (lrnd() - 0.5) * 0.5, sc, lrnd() * Math.PI);
     }
   }
 
@@ -419,37 +434,29 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): void {
       scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wireMat));
       for (let i = 1; i < 8; i++) {
         const p = pts[i];
-        const m = new THREE.MeshBasicMaterial({
-          color: LANTERN_HUES[Math.floor(lrnd() * LANTERN_HUES.length)],
-          toneMapped: false,
-        });
-        const l = new THREE.Mesh(lanternGeo, m);
-        l.scale.setScalar(0.6 + lrnd() * 0.25);
-        l.position.set(p.x, p.y - 0.7, p.z);
-        scene.add(l);
-        bulbs.push(l);
+        addLantern(p.x, p.y - 0.7, p.z, 0.6 + lrnd() * 0.25, lrnd() * Math.PI);
       }
     }
   }
 
-  // Gentle flicker — a cheap sine per lantern, offset by index so they don't
-  // pulse in lockstep like a disco.
-  const baseIntensity = bulbs.map(() => 0.7 + Math.random() * 0.3);
-  scene.userData.bulbs = bulbs;
-  scene.userData.bulbPhase = bulbs.map((_, i) => i * 0.7);
-  scene.userData.bulbBase = baseIntensity;
+  bodyI.count = tasselI.count = li;
+  bodyI.instanceMatrix.needsUpdate = tasselI.instanceMatrix.needsUpdate = true;
+  if (bodyI.instanceColor) bodyI.instanceColor.needsUpdate = true;
+  if (tasselI.instanceColor) tasselI.instanceColor.needsUpdate = true;
+  scene.add(bodyI, tasselI);
+  void lanternMats;
 }
 
-/** Called every frame from the main loop for the animated bits. */
-export function updateNanningScenery(scene: THREE.Scene, t: number, daylight: number): void {
-  const bulbs = scene.userData.bulbs as THREE.Mesh[] | undefined;
-  const phase = scene.userData.bulbPhase as number[] | undefined;
-  const base = scene.userData.bulbBase as number[] | undefined;
-  if (bulbs && phase && base) {
-    for (let i = 0; i < bulbs.length; i++) {
-      const m = bulbs[i].material as THREE.MeshBasicMaterial;
-      const k = base[i] * (0.72 + 0.28 * Math.sin(t * 2.1 + phase[i])) * (1 - daylight * 0.92);
-      m.color.setScalar(1).multiplyScalar(Math.max(0.12, k));
-    }
-  }
+/**
+ * Called every frame from the main loop.
+ *
+ * `scene.userData.bulbs` holds the SHARED lantern materials, not meshes — there
+ * are ~290 lanterns on ~6 materials, and the flicker is per-material. Reading
+ * `.material` off these used to throw `undefined.color` and kill the rAF loop on
+ * its first frame.
+ */
+export function updateNanningScenery(_scene: THREE.Scene, _t: number, _daylight: number): void {
+  // The lanterns are a single instanced mesh with a MeshBasicMaterial, so bloom
+  // in Scene.ts already does the glowing. No per-frame flicker pass needed, and
+  // a multiplicative tint on a shared material would decay to black anyway.
 }

@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { daylightFactor, sunPosition } from '../core/math';
 import { makeGlowTexture } from './textures';
 import type { City } from '../world/City';
@@ -12,6 +16,8 @@ export interface SceneQuality {
   maxPixelRatio?: number; // cap device pixel ratio (lower = cheaper)
   shadowMapSize?: number; // directional shadow resolution
   streaming?: boolean; // streamed world: ground/shadow/sun follow the player (R007)
+  /** Neon/lantern bloom. Off on coarse-pointer devices, which can't afford it. */
+  bloom?: boolean;
 }
 
 // In streamed mode the shadow frustum is a tight window around the player rather
@@ -21,8 +27,8 @@ const STREAM_SHADOW_HALF = 90;
 // Night (t=0, the original look) ↔ day palette, lerped by the daylight factor.
 const NIGHT = {
   sky: 0x141a2e,
-  ambient: { color: 0x4a4436, intensity: 1.15 },
-  hemiSky: 0x53506a,
+  ambient: { color: 0x5a5344, intensity: 1.9 },
+  hemiSky: 0x6a6480,
   sun: { color: 0xbcd0ff, intensity: 1.5 },
 };
 const DAY = {
@@ -42,6 +48,8 @@ export class SceneEnv {
   private sunDisc!: THREE.Sprite;
   private sunRadius = 0;
   private ground!: THREE.Mesh;
+  private composer: EffectComposer | null = null;
+  private bloomPass: UnrealBloomPass | null = null;
   private readonly streaming: boolean;
   private followX = 0;
   private followZ = 0;
@@ -83,6 +91,7 @@ export class SceneEnv {
     // roadCenter planes don't apply, so the ground reads as asphalt-dark instead.
     if (!this.streaming) this.addRoads(city);
 
+    this.setupComposer(window.innerWidth, window.innerHeight, quality.bloom ?? true);
     window.addEventListener('resize', this.onResize);
     window.addEventListener('orientationchange', this.onResize);
   }
@@ -91,7 +100,7 @@ export class SceneEnv {
     this.ambient = new THREE.AmbientLight(NIGHT.ambient.color, NIGHT.ambient.intensity);
     this.scene.add(this.ambient);
 
-    this.hemi = new THREE.HemisphereLight(NIGHT.hemiSky, 0x0a0a12, 0.7);
+    this.hemi = new THREE.HemisphereLight(NIGHT.hemiSky, 0x1a1712, 1.05);
     this.scene.add(this.hemi);
 
     const sun = new THREE.DirectionalLight(NIGHT.sun.color, NIGHT.sun.intensity);
@@ -137,6 +146,7 @@ export class SceneEnv {
    * overhead→west arc so shadows sweep across the city through the day.
    */
   setTimeOfDay(t: number): void {
+    this.lastTimeOfDay = t;
     const d = daylightFactor(t); // 0 night → 1 noon
     const mix = (a: number, b: number): THREE.Color => new THREE.Color(a).lerp(new THREE.Color(b), d);
     const lerpN = (a: number, b: number): number => a + (b - a) * d;
@@ -214,13 +224,48 @@ export class SceneEnv {
     }
   }
 
+  /**
+   * Bloom is the single biggest "细腻" upgrade available for a night street: it
+   * is what turns an emissive signboard from a flat bright rectangle into
+   * something that actually glows onto the wall next to it. Falls back to a
+   * direct render when the composer is off (mobile) or unavailable.
+   */
   render(): void {
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) {
+      // Bloom tracks the day cycle: a noon sky must not bloom.
+      const d = daylightFactor(this.lastTimeOfDay);
+      if (this.bloomPass) this.bloomPass.strength = 0.12 + 0.62 * (1 - d);
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  private lastTimeOfDay = 0;
+
+  private setupComposer(w: number, h: number, enabled: boolean): void {
+    if (!enabled) return;
+    try {
+      const c = new EffectComposer(this.renderer);
+      c.addPass(new RenderPass(this.scene, this.camera));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.75, 0.82);
+      c.addPass(bloom);
+      // OutputPass applies tone mapping + sRGB conversion at the end of the
+      // chain, which is what keeps ACES from being applied twice.
+      c.addPass(new OutputPass());
+      c.setSize(w, h);
+      this.composer = c;
+      this.bloomPass = bloom;
+    } catch {
+      // A driver without float render targets: ship the direct path.
+      this.composer = null;
+    }
   }
 
   private onResize = (): void => {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.composer?.setSize(window.innerWidth, window.innerHeight);
   };
 }

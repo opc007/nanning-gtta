@@ -276,6 +276,8 @@ export const CAR_SHAPES: CarShape[] = [
   { id: 'sports', length: 4.3, width: 1.86, bodyH: 0.55, bodyY: 0.5, cabinLen: 1.8, cabinH: 0.5, cabinX: -0.35, wheelR: 0.44 },
   { id: 'van', length: 4.4, width: 2.0, bodyH: 1.0, bodyY: 0.8, cabinLen: 2.7, cabinH: 1.0, cabinX: 0.1, wheelR: 0.46 },
   { id: 'pickup', length: 4.4, width: 1.96, bodyH: 0.8, bodyY: 0.72, cabinLen: 1.5, cabinH: 0.95, cabinX: 0.55, wheelR: 0.48 },
+  // 电动车 — narrow, no cabin, and 1/8th the mass of a car.
+  { id: 'ebike', length: 1.85, width: 0.72, bodyH: 0.5, bodyY: 0.52, cabinLen: 0, cabinH: 0, cabinX: 0, wheelR: 0.28 },
 ];
 
 export function makeCar(color: number, shape: CarShape = CAR_SHAPES[0]): CarMesh {
@@ -344,4 +346,82 @@ export function makePed(color: number): THREE.Group {
   head.castShadow = true;
   group.add(head);
   return group;
+}
+
+/**
+ * 电瓶车 silhouette for the CAR_SHAPES system.
+ *
+ * In Nanning these are the actual default transport — they outnumber cars by
+ * something like 50:1 in the reference photos, parked in ranked rows on every
+ * pavement, and they are the vehicle a 南宁 GTA should start you on. It drives
+ * on the base game's car physics (which handles the weight, momentum and
+ * collisions); what changes is that it is narrow, quick, and it falls over if
+ * you hit something hard.
+ */
+/** The e-bike entry from CAR_SHAPES, so the mesh builder and the table can't drift. */
+export const EBIKE_SHAPE: CarShape = CAR_SHAPES.find((s) => s.id === 'ebike')!;
+
+/** Step-through scooter body: floorboard, battery box, seat, leg shield, bars. */
+export function makeEbike(color: number, shape: CarShape = EBIKE_SHAPE): CarMesh {
+  const group = new THREE.Group();
+  const hl = shape.length / 2;
+  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.5 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.88 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xb9bcc0, roughness: 0.35, metalness: 0.85 });
+
+  // Floorboard + battery under it
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(shape.length * 0.5, 0.09, shape.width * 0.82), dark);
+  floor.position.set(-0.08, shape.bodyY - 0.18, 0);
+  floor.castShadow = true;
+  group.add(floor);
+  const batt = new THREE.Mesh(new THREE.BoxGeometry(shape.length * 0.34, 0.22, shape.width * 0.7), paint);
+  batt.position.set(-0.05, shape.bodyY - 0.3, 0);
+  group.add(batt);
+  // Rear body + seat
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(shape.length * 0.3, 0.12, shape.width * 0.9), dark);
+  seat.position.set(-0.5, shape.bodyY + 0.16, 0);
+  seat.castShadow = true;
+  group.add(seat);
+  // Leg shield
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.5, shape.width * 0.95), paint);
+  shield.position.set(0.42, shape.bodyY + 0.06, 0);
+  shield.castShadow = true;
+  group.add(shield);
+  // Front fairing
+  const fair = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.3, shape.width * 0.8), paint);
+  fair.position.set(0.66, shape.bodyY + 0.12, 0);
+  group.add(fair);
+  // Handlebar
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, shape.width * 1.15, 6), chrome);
+  bar.rotation.x = Math.PI / 2;
+  bar.position.set(0.44, shape.bodyY + 0.42, 0);
+  group.add(bar);
+  // Headlight
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.085, 8, 6),
+    new THREE.MeshStandardMaterial({ color: 0xfff4d0, emissive: 0xffe9b0, emissiveIntensity: 2.2 }),
+  );
+  head.position.set(0.72, shape.bodyY + 0.18, 0);
+  group.add(head);
+  // Tail light
+  const tail = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, 0.09, 0.2),
+    new THREE.MeshStandardMaterial({ color: 0x551015, emissive: 0xff2030, emissiveIntensity: 1.6 }),
+  );
+  tail.position.set(-hl + 0.05, shape.bodyY + 0.2, 0);
+  group.add(tail);
+
+  // Wheels — the collision circle matches the real wheelbase, not the body.
+  const wheelGeo = new THREE.TorusGeometry(shape.wheelR * 0.78, shape.wheelR * 0.24, 6, 14);
+  wheelGeo.rotateY(Math.PI / 2);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.95 });
+  const steerWheels: THREE.Object3D[] = [];
+  for (const wx of [hl * 0.82, -hl * 0.78]) {
+    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    w.position.set(wx, shape.wheelR, 0);
+    w.castShadow = true;
+    group.add(w);
+    if (wx > 0) steerWheels.push(w);
+  }
+  return { group, steerWheels };
 }
