@@ -374,10 +374,17 @@ try {
     c.lane = { axis: 'x', fixed: cz, dir: 1 };
     c.cruise = 30;
     c.x = cx - 2.5; c.z = cz; c.vx = 30; c.vz = 0;
-    g.player.x = cx; g.player.z = cz; // right in its path, no time to stop
+    // Stand well clear first. Stepping out of the spawn car can leave the
+    // contact latch set, and a later fast hit then does not count as a new impact.
+    g.teleport(cx, cz + 25, 0);
     return j;
   });
   const deathT0 = await page.evaluate(() => window.__game.timeOfDay);
+  await page.waitForFunction((t0) => {
+    let d = window.__game.timeOfDay - t0;
+    if (d < -0.5) d += 1;
+    return d * 1440 > 0.05;
+  }, deathT0);
   let deathRes = { health: 100, wasted: false };
   for (let i = 0; i < 50 && !deathRes.wasted; i++) {
     // Re-dart into the car's path. A single placement is missed when the
@@ -386,12 +393,11 @@ try {
       const g = window.__game;
       const c = g.vehicles.cars[j];
       c.vx = 30; c.vz = 0;
-      g.player.x = c.x + 1.4;
-      g.player.z = c.z;
+      g.player.teleport(c.x + 0.6, c.z, 0);
     }, deathCar);
     await page.waitForTimeout(80);
     deathRes = await page.evaluate(() => ({ health: window.__game.health, wasted: window.__game.wasted }));
-    if (await simSince(deathT0) > 1.2) break;
+    if (await simSince(deathT0) > 2.5) break;
   }
   check(
     'jumping in front of a fast car is fatal (WASTED)',
