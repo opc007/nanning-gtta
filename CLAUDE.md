@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A browser-based, GTA-style 3D open-world **vertical slice** built from scratch in TypeScript + Three.js: a procedural night city you can drive a car around, get out, and walk on foot, with ambient traffic and pedestrians. It is a tech demo, not a full game. (The name is a joke.)
+A browser vertical slice of **南宁中山路美食街**: one true-to-scale pedestrian street (about 300 m, z −150..+150, 9 m wide, 2.4 m qilou arcades raised 0.15 m, 8 m shopfronts, a 4×15 m dead-end alley at mid-street). You walk it, buy from named shops, smash a front, and pick up a wanted level. It is a tech demo, not a full game.
+
+The default boot builds that street (`generateNanningCity`). `?stream=1` still runs the upstream procedural city (the gta7 streaming world) and does not mount the Nanning session. Ambient cars are not on the food street; a few background lanes sit past the barriers on 民族大道 and 桃源路.
+
+Shop names are real 中山路 / 南宁 businesses where they could be verified, plus owner-requested names (舒记, 荣记, 阿婆酸嘢, 横州茉莉, 甘家界) and plausible local signs for the rest. See the `source` field on each `ShopDef`.
+
+The protagonist is a data-driven procedural character (`src/characters/`), not the capsule ped. NPCs still use `makePed`.
 
 ## Commands
 

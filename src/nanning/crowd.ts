@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import { CHATTER, COP_SHOUT, CHATTER_REACT } from './data';
+import { stepCrowd, type CrowdMover } from './crowdStep';
 
 export interface Talker {
   x: number;
@@ -142,11 +143,12 @@ export class Crowd {
       });
     }
 
-    // Ambient chatter: a handful of people who just say 南宁白话 and walk off.
+    // Ambient chatter along the carriageway. The old scatter covered the whole
+    // 560 m city; on a single street that put most people inside buildings.
     for (let i = 0; i < ambient; i++) {
       const g = makePerson(0x232830, SHIRTS[Math.floor(rnd() * SHIRTS.length)]);
-      const x = (rnd() - 0.5) * 300;
-      const z = -150 + rnd() * 280;
+      const x = (i % 2 === 0 ? -1 : 1) * (1.6 + rnd() * 2.2);
+      const z = -140 + (i + 0.5) * (280 / Math.max(1, ambient));
       g.position.set(x, 0, z);
       scene.add(g);
       const b = makeBubble();
@@ -201,18 +203,39 @@ export class Crowd {
    */
   update(dt: number, px: number, pz: number, heat: number, smashes: number): void {
     this.t += dt;
-    for (const t of this.talkers) {
-      if (t.t > 0) {
-        t.t -= dt;
+    const movers: CrowdMover[] = this.talkers.map((t) => {
+      const v = t.group.userData.vel as THREE.Vector3 | undefined;
+      return {
+        t: t.t,
+        leaving: !!t.group.userData.leaving,
+        x: t.x,
+        z: t.z,
+        vx: v?.x ?? 0,
+        vz: v?.z ?? 0,
+        idleSteps: 0,
+      };
+    });
+    // `leaving` continues to the next person. Returning here used to freeze
+    // everyone queued after the first walker.
+    stepCrowd(movers, dt);
+
+    for (let i = 0; i < this.talkers.length; i++) {
+      const t = this.talkers[i];
+      const m = movers[i];
+      const wasTalking = t.t > 0;
+      t.t = m.t;
+      t.x = m.x;
+      t.z = m.z;
+      if (wasTalking) {
         if (t.t <= 0) t.bubble.visible = false;
         continue;
       }
-      if (t.group.userData.leaving) {
+      if (m.leaving) {
         const v = t.group.userData.vel as THREE.Vector3;
-        t.group.position.x += v.x * dt;
-        t.group.position.z += v.z * dt;
+        t.group.position.x = t.x;
+        t.group.position.z = t.z;
         t.group.rotation.y = Math.atan2(v.x, v.z);
-        return;
+        continue;
       }
       // Not talking: occasionally murmur, and turn to face the player up close.
       const d = Math.hypot(t.x - px, t.z - pz);

@@ -53,6 +53,8 @@ export class Shops {
   readonly wallet: Wallet = { money: 60, satiety: 82, eaten: 0, smashed: 0, earned: 0 };
   /** Shop id the player is standing at, or null. Read by the HUD each frame. */
   focused: ShopState | null = null;
+  /** Night-market stalls are interactable only while this is true. */
+  nightMarket = true;
 
   private readonly sparkMat: THREE.PointsMaterial;
   private readonly sparkGeo: THREE.BufferGeometry;
@@ -88,11 +90,22 @@ export class Shops {
     scene.add(this.sparkPool);
   }
 
+  /** Night-market stalls drop out of reach while the market is packed up. */
+  setNightMarket(open: boolean): void {
+    this.nightMarket = open;
+    if (!open && this.focused?.unit.nightOnly) this.focused = null;
+  }
+
+  private available(s: ShopState): boolean {
+    return this.nightMarket || !s.unit.nightOnly;
+  }
+
   /** Nearest shop to (px,pz) within `max`, for the E prompt. */
   nearest(px: number, pz: number, max = REACH + 2): ShopState | null {
     let best: ShopState | null = null;
     let bestD = max * max;
     for (const s of this.states) {
+      if (!this.available(s)) continue;
       const dx = s.unit.x - px;
       const dz = s.unit.z - pz;
       const d = dx * dx + dz * dz;
@@ -113,6 +126,7 @@ export class Shops {
     let best: ShopState | null = null;
     let bestScore = -Infinity;
     for (const s of this.states) {
+      if (!this.available(s)) continue;
       const dx = s.unit.x - px;
       const dz = s.unit.z - pz;
       const d = Math.hypot(dx, dz);

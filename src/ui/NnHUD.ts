@@ -33,6 +33,8 @@ export class NnHUD {
   private readonly areaName: HTMLElement;
   private readonly areaSub: HTMLElement;
   private readonly promptEl: HTMLElement;
+  private readonly stamWrap: HTMLElement;
+  private readonly stamFill: HTMLElement;
   private readonly toastWrap: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly panelTitle: HTMLElement;
@@ -54,6 +56,9 @@ export class NnHUD {
   private lastWallet: Wallet | null = null;
   private currentArea: string | null = null;
   private areaTimer = 0;
+  private stamShow = 0;
+  private shopPrompt = false;
+  private mountHint = false;
   private readonly toasts: { el: HTMLElement; t: number }[] = [];
 
   constructor(
@@ -84,7 +89,19 @@ export class NnHUD {
     this.fillBar.style.cssText =
       `height:100%;width:60%;background:linear-gradient(90deg,${RED},${GOLD},${JADE});transition:width .2s;`;
     this.fillTrack.appendChild(this.fillBar);
-    walletBox.append(this.walletEl, fillLabel, this.fillTrack);
+    const stamLabel = document.createElement('div');
+    stamLabel.style.cssText = 'font-size:11px;opacity:.62;margin-top:8px;letter-spacing:1px;';
+    stamLabel.textContent = '体力 STAMINA';
+    this.stamWrap = document.createElement('div');
+    this.stamWrap.style.cssText = 'opacity:0;transition:opacity .35s;';
+    const stamTrack = document.createElement('div');
+    stamTrack.style.cssText =
+      'height:7px;border-radius:4px;background:rgba(255,255,255,.1);margin-top:4px;overflow:hidden;';
+    this.stamFill = document.createElement('div');
+    this.stamFill.style.cssText = `height:100%;width:100%;background:${GOLD};`;
+    stamTrack.appendChild(this.stamFill);
+    this.stamWrap.append(stamLabel, stamTrack);
+    walletBox.append(this.walletEl, fillLabel, this.fillTrack, this.stamWrap);
     root.appendChild(walletBox);
 
     // ── Bottom-right: 战绩 ──────────────────────────────────────────────
@@ -294,13 +311,14 @@ export class NnHUD {
       }`;
     }
 
-    // Interaction prompt
-    if (shop && !this.isPanelOpen) {
+    // Interaction prompt. J is the punch key; left click does the same.
+    this.shopPrompt = !!(shop && !this.isPanelOpen);
+    if (this.shopPrompt && shop) {
       this.promptEl.style.display = 'block';
       this.promptEl.innerHTML = shop.broken
-        ? `<span style="color:${RED}">左键</span> 继续砸　·　铺面已烂（老板很生气）`
-        : `<span style="color:${GOLD}">E</span> 进店买嘢　·　<span style="color:${RED}">左键</span> 砸铺`;
-    } else {
+        ? `<span style="color:${RED}">J</span> / 左键 继续砸　·　铺面已烂（老板很生气）`
+        : `<span style="color:${GOLD}">E</span> 进店买嘢　·　<span style="color:${RED}">J</span> / 左键 砸铺`;
+    } else if (!this.mountHint) {
       this.promptEl.style.display = 'none';
     }
 
@@ -332,6 +350,28 @@ export class NnHUD {
       } else if (t.t < 0.5) {
         t.el.style.opacity = String(t.t / 0.5);
       }
+    }
+  }
+
+  /** Show the bar while sprinting or recovering, then fade it. */
+  setStamina(value: number, max: number, active: boolean, dt: number): void {
+    const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+    this.stamFill.style.width = `${ratio * 100}%`;
+    this.stamFill.style.background = ratio < 0.25 ? RED : GOLD;
+    if (active || value < max - 0.5) this.stamShow = 2;
+    else this.stamShow = Math.max(0, this.stamShow - dt);
+    this.stamWrap.style.opacity = this.stamShow > 0 ? '1' : '0';
+  }
+
+  /** [F] 上车 when a car is in reach and no shop prompt is up. */
+  setMountHint(near: boolean): void {
+    this.mountHint = near && !this.shopPrompt && !this.isPanelOpen;
+    if (this.shopPrompt || this.isPanelOpen) return;
+    if (this.mountHint) {
+      this.promptEl.style.display = 'block';
+      this.promptEl.innerHTML = `<span style="color:${GOLD}">F</span> 上车`;
+    } else {
+      this.promptEl.style.display = 'none';
     }
   }
 
