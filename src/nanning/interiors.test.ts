@@ -71,6 +71,14 @@ describe('interiors', () => {
     expect(stool?.h).toBeCloseTo(0.45);
     expect(table?.h).toBeCloseTo(0.75);
   });
+
+  it('hangs a menu board in every required shop type', () => {
+    for (const kind of ['noodle', 'fenjiao', 'grill', 'tea'] as ShopKind[]) {
+      const shell = all.find((s) => s.kind === kind)!;
+      const layout = buildInterior(shell);
+      expect(layout.props.some((p) => p.prop === 'menu'), kind).toBe(true);
+    }
+  });
 });
 
 describe('planInteriorStream', () => {

@@ -3,6 +3,7 @@
 // entering ANY nearby car (not just the spawn car), and physical bump & shove.
 // Uses the window.__game debug handle to set up deterministic scenarios.
 import { chromium } from 'playwright';
+import { PNG } from 'pngjs';
 import { preview } from 'vite';
 
 const server = process.env.URL ? null : await preview({ preview: { port: 5182 } });
@@ -16,6 +17,41 @@ const check = (name, ok, detail) => {
   results.push({ name, ok, detail });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${detail ?? ''}`);
 };
+
+/** Fraction of near-black samples, plus how many distinct colours the frame has. */
+function frameStats(buf) {
+  const png = PNG.sync.read(buf);
+  let dark = 0;
+  let n = 0;
+  const colors = new Set();
+  for (let y = 0; y < png.height; y += 4) {
+    for (let x = 0; x < png.width; x += 4) {
+      const i = (png.width * y + x) << 2;
+      const r = png.data[i];
+      const g = png.data[i + 1];
+      const b = png.data[i + 2];
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (lum < 10) dark++;
+      colors.add((r >> 4) + ',' + (g >> 4) + ',' + (b >> 4));
+      n++;
+    }
+  }
+  return { dark: n ? dark / n : 1, colors: colors.size };
+}
+
+/** A clipped interior is a near-solid black frame. Daylight still has the coat and the room. */
+function frameReadable(stats) {
+  return stats.dark < 0.55 && stats.colors >= 18;
+}
+
+async function settle(page) {
+  const t0 = await page.evaluate(() => window.__game.timeOfDay);
+  await page.waitForFunction((start) => {
+    const t = window.__game.timeOfDay;
+    const dt = t >= start ? t - start : t + 1 - start;
+    return dt * 1440 > 0.08;
+  }, t0, { timeout: 15000 });
+}
 
 try {
   const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
@@ -36,6 +72,16 @@ try {
       await page.keyboard.press('KeyF');
       await page.waitForFunction(() => window.__game.mode === 'driving', { timeout: 8000 });
     }
+  };
+  // Daylight, HUD hidden, stay on foot. Used where the assertion is the picture.
+  const resetOnFoot = async () => {
+    const lit = new URL(URL);
+    lit.searchParams.set('t', '0.45');
+    lit.searchParams.set('hud', '0');
+    await page.goto(lit.toString(), { waitUntil: 'load' });
+    await page.waitForTimeout(700);
+    await page.evaluate(() => window.__skipSplash?.());
+    await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 8000 });
   };
 
   // Headless swiftshader often renders under 2 fps, so a fixed 200 ms is not a frame.
@@ -849,9 +895,7 @@ try {
   );
 
   // --- 14d. Jump onto a shop table (stool / table tops are walkable).
-  await reset();
-  await page.keyboard.press('KeyF');
-  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 8000 });
+  await resetOnFoot();
   const jumpSetup = await page.evaluate(() => {
     const g = window.__game;
     const shop = g.city.shops.find((s) => s.def.kind === 'noodle' && !s.nightOnly);
@@ -912,16 +956,31 @@ try {
       if (sample.grounded && sample.y > 0.4) landedOn = sample.y;
     }
   }
+  let jumpFrame = { dark: 1, colors: 0 };
+  let jumpCam = { dist: 0, blocked: true, eyeY: 0, y: landedOn };
+  if (table && landedOn > 0.4) {
+    await settle(page);
+    jumpFrame = frameStats(await page.screenshot());
+    jumpCam = await page.evaluate(() => ({
+      dist: window.__game.camDist,
+      blocked: window.__game.camBlocked,
+      eyeY: window.__game.camEye.y,
+      y: window.__game.player.y,
+    }));
+  }
   check(
     'jump lands on a shop table',
     !!table && landedOn > 0.4,
     `table=${table ? table.h.toFixed(2) : 'none'} peak=${peak.toFixed(2)} landed=${landedOn.toFixed(2)}`,
   );
+  check(
+    'table landing frames the player and the tabletop',
+    !!table && landedOn > 0.4 && !jumpCam.blocked && jumpCam.dist >= 1.9 && jumpCam.eyeY > jumpCam.y + 0.8 && frameReadable(jumpFrame),
+    `cam=${jumpCam.dist.toFixed(2)} eyeY=${jumpCam.eyeY.toFixed(2)} feet=${jumpCam.y.toFixed(2)} blocked=${jumpCam.blocked} dark=${jumpFrame.dark.toFixed(2)} colors=${jumpFrame.colors}`,
+  );
 
   // --- 14e. Walk into each required shop type. The back wall still stops you.
-  await reset();
-  await page.keyboard.press('KeyF');
-  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 8000 });
+  await resetOnFoot();
   for (const kind of ['noodle', 'fenjiao', 'grill', 'tea']) {
     const shop = await page.evaluate((kind) => {
       const s = window.__game.city.shops.find((sh) => sh.def.kind === kind && !sh.nightOnly);
@@ -941,12 +1000,35 @@ try {
       if (inside.interior) break;
     }
     await page.keyboard.up('KeyW');
-    // Still short of the back wall (8 m inland). Camera has pulled in off the street distance.
-    const blocked = shop.nx > 0 ? inside.x > shop.x - 9.2 : inside.x < shop.x + 9.2;
+    // Still short of the back wall (8 m inland).
+    const stopped = shop.nx > 0 ? inside.x > shop.x - 9.2 : inside.x < shop.x + 9.2;
+    await settle(page);
+    const entered = await page.evaluate(() => ({
+      interior: window.__game.interior,
+      cam: window.__game.camDist,
+      blocked: window.__game.camBlocked,
+    }));
+    const enteredFrame = frameStats(await page.screenshot());
+    const facing = [];
+    const inland = shop.nx > 0 ? Math.PI : 0;
+    for (const yaw of [inland, inland + Math.PI, inland + Math.PI / 2, inland - Math.PI / 2]) {
+      await page.evaluate(({ x, z, yaw }) => {
+        window.__game.teleport(x, z, yaw);
+      }, { x: shop.x - shop.nx * 3.1, z: shop.z, yaw });
+      await settle(page);
+      const view = await page.evaluate(() => ({
+        cam: window.__game.camDist,
+        blocked: window.__game.camBlocked,
+        interior: window.__game.interior,
+      }));
+      const stats = frameStats(await page.screenshot());
+      facing.push({ ...view, ...stats, yaw });
+    }
+    const viewsOk = facing.every((v) => v.interior && !v.blocked && v.cam > 1.5 && v.cam < 6 && frameReadable(v));
     check(
       `walk into a ${kind} shop without the camera clipping`,
-      inside.interior && blocked && inside.cam > 0.7 && inside.cam < 6,
-      `x=${inside.x.toFixed(2)} interior=${inside.interior} cam=${inside.cam.toFixed(2)}`,
+      inside.interior && stopped && entered.interior && !entered.blocked && entered.cam > 1.5 && entered.cam < 6 && frameReadable(enteredFrame) && viewsOk,
+      `x=${inside.x.toFixed(2)} entered dark=${enteredFrame.dark.toFixed(2)} colors=${enteredFrame.colors} cam=${entered.cam.toFixed(2)} blocked=${entered.blocked} facings=${facing.map((v) => `${v.dark.toFixed(2)}/${v.colors}/d${v.cam.toFixed(1)}`).join(' ')}`,
     );
   }
 

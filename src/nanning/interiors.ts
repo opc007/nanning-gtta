@@ -38,7 +38,8 @@ export type PropId =
   | 'counter'
   | 'steamer'
   | 'case'
-  | 'grill';
+  | 'grill'
+  | 'menu';
 
 export interface InteriorProp {
   prop: PropId;
@@ -107,6 +108,8 @@ const PROP_SIZE: Record<PropId, { w: number; d: number; h: number }> = {
   steamer: { w: 0.55, d: 0.55, h: 0.9 },
   case: { w: 0.5, d: 1.2, h: 1.05 },
   grill: { w: 0.7, d: 1.1, h: 0.9 },
+  // Short collider so it isn't a step or a camera block. The mesh is a wall board.
+  menu: { w: 0.08, d: 1.05, h: 0.2 },
 };
 
 function toWorld(shell: ShopShell, u: number, v: number): { x: number; z: number } {
@@ -147,6 +150,14 @@ function stoolsAround(list: LocalProp[], u: number, v: number, towardAisle: numb
   addProp(list, 'stool', u + s * 0.85, v + Math.sign(v || 1) * (s * 0.2), true);
 }
 
+/** Wall board on the back (or a side, if the back is a grill). Not a step. */
+function addMenu(list: LocalProp[], depth: number, width: number, v: number): void {
+  const d = 0.9;
+  const limit = Math.max(0.4, width / 2 - 0.85);
+  const vv = Math.max(-limit, Math.min(limit, v));
+  addProp(list, 'menu', Math.max(1.4, depth - 0.58), vv, false, { w: 0.08, d, h: 0.2 });
+}
+
 function layoutFor(template: InteriorTemplate, depth: number, width: number): LocalProp[] {
   const list: LocalProp[] = [];
   const half = Math.max(1.2, width / 2 - 1.1);
@@ -166,6 +177,7 @@ function layoutFor(template: InteriorTemplate, depth: number, width: number): Lo
         stoolsAround(list, u, v, v === 0 ? 1 : v);
       }
     }
+    addMenu(list, depth, width, side * 0.15);
   } else if (template === 'fenjiao') {
     addProp(list, 'counter', back, -0.4, false, { d: counterW * 0.8, w: 0.65 });
     addProp(list, 'steamer', back, counterW * 0.45);
@@ -179,6 +191,7 @@ function layoutFor(template: InteriorTemplate, depth: number, width: number): Lo
       addProp(list, 'table-square', u, v);
       stoolsAround(list, u, v, v === 0 ? 1 : v);
     }
+    addMenu(list, depth, width, side * 0.2);
   } else if (template === 'bbq') {
     addProp(list, 'grill', back, 0, false, { d: Math.min(2.2, counterW), w: 0.75, h: 0.9 });
     addProp(list, 'table-round', 2.4, -side);
@@ -187,6 +200,7 @@ function layoutFor(template: InteriorTemplate, depth: number, width: number): Lo
     stoolsAround(list, 4.4, side * 0.85, side);
     addProp(list, 'stool', 3.3, 0.15, true);
     addProp(list, 'stool', 3.3, -0.55, true);
+    addMenu(list, depth, width, side);
   } else if (template === 'milktea') {
     addProp(list, 'counter', back, 0, false, { d: Math.min(3.4, width - 1.4), w: 0.65, h: 1.0 });
     addProp(list, 'case', 1.5, -half * 0.75, false, { h: 1.05 });
@@ -196,12 +210,14 @@ function layoutFor(template: InteriorTemplate, depth: number, width: number): Lo
     addProp(list, 'stool-high', 2.5 + 0.5, side * 0.55, true);
     addProp(list, 'stool-high', 4.3, -side * 0.35 + 0.55, true);
     addProp(list, 'stool-high', 4.3 - 0.5, -side * 0.35, true);
+    addMenu(list, depth, width, 0);
   } else {
     addProp(list, 'counter', back, 0, false, { d: counterW, w: 0.7 });
     addProp(list, 'table-square', 2.4, -side * 0.7);
     addProp(list, 'table-square', 4.2, side * 0.7);
     stoolsAround(list, 2.4, -side * 0.7, -1);
     stoolsAround(list, 4.2, side * 0.7, 1);
+    addMenu(list, depth, width, 0);
   }
   return list;
 }

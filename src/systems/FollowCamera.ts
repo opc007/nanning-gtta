@@ -1,25 +1,29 @@
 import * as THREE from 'three';
 import { damp, angleDelta, clamp } from '../core/math';
 import {
-  approachCameraDistance,
-  cameraPullDistance,
   clampPitch,
   followDistance,
   lookLead,
+  resolveChaseEye,
+  type ChaseConfine,
   type FollowParams,
 } from '../core/followCam';
-import { segmentHitAabb3, type Aabb3 } from './Collision';
+import type { Aabb3 } from './Collision';
 import type { SpatialGrid } from './SpatialGrid';
 
 /** On-foot chase. Closer than the old 8.6 m framing so the street and the coat both read. */
 export const STREET_CAM: FollowParams = { distance: 5.5, height: 2.3, lookHeight: 1.5, stiffness: 8 };
-/** Pulled in once the player is inside a shop, so the camera fits the room. */
-export const INTERIOR_CAM: FollowParams = { distance: 3.2, height: 1.9, lookHeight: 1.45, stiffness: 10 };
+/**
+ * Inside a shop. Long enough that the coat doesn't fill the frame, and
+ * aimed low enough to read tables. The solver orbits when this rest pose
+ * would sit in a wall.
+ */
+export const INTERIOR_CAM: FollowParams = { distance: 3.5, height: 2.05, lookHeight: 1.05, stiffness: 10 };
 
 const PITCH_STREET = { min: (-30 * Math.PI) / 180, max: (55 * Math.PI) / 180 };
 const PITCH_INTERIOR = { min: (-20 * Math.PI) / 180, max: (60 * Math.PI) / 180 };
 
-export type { FollowParams };
+export type { ChaseConfine, FollowParams };
 
 export const CAR_CAM: FollowParams = { distance: 9, height: 4.2, lookHeight: 1.4, stiffness: 4, speedPull: 0.16, slideSwing: 0.3, maxSwing: 2 };
 // Nanning's whole subject is the street: the arcade overhead, the lantern
@@ -42,10 +46,12 @@ export class FollowCamera {
   /** Orbit for the on-foot camera. Yaw 0 looks along +X. Positive pitch looks down. */
   orbitYaw = 0;
   orbitPitch = 0.15;
-  private shownDist = STREET_CAM.distance;
   private lookIdle = 0;
   /** Distance from the look point to the eye after occlusion. Read by the rig. */
   eyeDistance = STREET_CAM.distance;
+  /** True when the solved eye is inside a wall. The frame would be black. */
+  eyeBlocked = false;
+  private solvedYaw = 0;
   /** True while the pointer is locked. Auto-return waits until it isn't. */
   pointerLocked = false;
 
@@ -176,8 +182,9 @@ export class FollowCamera {
   snapBehind(heading: number, x: number, z: number, feetY = 0, preset: FollowParams = STREET_CAM): void {
     this.orbitYaw = heading;
     this.orbitPitch = Math.atan2(preset.height - preset.lookHeight, preset.distance);
-    this.shownDist = preset.distance;
+    this.solvedYaw = heading;
     this.eyeDistance = preset.distance;
+    this.eyeBlocked = false;
     this.lookIdle = 0;
     this.snapped = true;
     const pitch = this.orbitPitch;
@@ -206,6 +213,7 @@ export class FollowCamera {
     lookDY: number,
     blocks: readonly Aabb3[],
     blockCount: number,
+    confine: ChaseConfine | null = null,
   ): void {
     const looking = Math.abs(lookDX) + Math.abs(lookDY) > 1e-5;
     if (looking) this.lookIdle = 0;
@@ -224,44 +232,31 @@ export class FollowCamera {
       this.orbitPitch += clamp(rest - this.orbitPitch, -dt, dt);
     }
 
-    this.shownDist = approachCameraDistance(this.shownDist, preset.distance, dt, 2.5);
-    const pitch = this.orbitPitch;
-    const horiz = Math.cos(pitch) * this.shownDist;
-    const fx = Math.cos(this.orbitYaw);
-    const fz = -Math.sin(this.orbitYaw);
-    const lookY = feetY + preset.lookHeight;
-    const desiredX = x - fx * horiz;
-    const desiredY = lookY + Math.sin(pitch) * this.shownDist;
-    const desiredZ = z - fz * horiz;
-
-    let hitT = -1;
+    const boxes: Aabb3[] = [];
     for (let i = 0; i < blockCount; i++) {
       const box = blocks[i];
-      if (!box.camBlock) continue;
-      const t = segmentHitAabb3(x, lookY, z, desiredX, desiredY, desiredZ, box);
-      if (t >= 0 && (hitT < 0 || t < hitT)) hitT = t;
+      if (box.camBlock) boxes.push(box);
     }
-    for (const b of this.softBlockers) {
-      const dx = desiredX - x;
-      const dz = desiredZ - z;
-      const len2 = dx * dx + dz * dz;
-      if (len2 < 1e-4) continue;
-      const t = Math.max(0, Math.min(1, ((b.x - x) * dx + (b.z - z) * dz) / len2));
-      const px = x + dx * t;
-      const pz = z + dz * t;
-      if (Math.hypot(px - b.x, pz - b.z) < b.r * 0.55 && (hitT < 0 || t < hitT)) hitT = t;
-    }
-
-    const segLen = Math.hypot(desiredX - x, desiredY - lookY, desiredZ - z);
-    const pulled = cameraPullDistance(segLen, hitT);
-    this.eyeDistance = approachCameraDistance(this.eyeDistance, pulled, dt, 3);
-    const scale = segLen > 1e-4 ? this.eyeDistance / segLen : 1;
-    this.camera.position.set(
-      x + (desiredX - x) * scale,
-      lookY + (desiredY - lookY) * scale,
-      z + (desiredZ - z) * scale,
-    );
-    this.look.set(x, lookY, z);
+    const solved = resolveChaseEye({
+      x,
+      z,
+      feetY,
+      yaw: this.orbitYaw,
+      pitch: this.orbitPitch,
+      distance: preset.distance,
+      lookHeight: preset.lookHeight,
+      blocks: boxes,
+      showSurface: feetY > 0.32,
+      confine,
+      spheres: this.softBlockers,
+      preferYaw: this.solvedYaw,
+    });
+    this.solvedYaw = solved.yaw;
+    this.eyeDistance = solved.dist;
+    this.eyeBlocked = !solved.clear;
+    // Snap. Easing the eye toward a blocked pose is what put it inside the wall.
+    this.camera.position.set(solved.x, solved.y, solved.z);
+    this.look.set(x, solved.lookY, z);
     this.camera.lookAt(this.look);
 
     const fov = preset.distance < 4 ? 66 : 60;

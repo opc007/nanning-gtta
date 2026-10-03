@@ -15,7 +15,7 @@ import { StreamedWorld } from './world/StreamedWorld';
 import { SceneEnv } from './render/Scene';
 import { CityAssets } from './render/Assets';
 import { Player } from './entities/Player';
-import { FollowCamera, CAR_CAM, FOOT_CAM, STREET_CAM, INTERIOR_CAM } from './systems/FollowCamera';
+import { FollowCamera, CAR_CAM, FOOT_CAM, STREET_CAM, INTERIOR_CAM, type ChaseConfine } from './systems/FollowCamera';
 import { Vehicles } from './systems/Vehicles';
 import { Pedestrians } from './systems/Pedestrians';
 import { Debris } from './systems/Debris';
@@ -392,6 +392,8 @@ function drivingInput(): VehicleInput {
 
 let furniture: Aabb3[] = [];
 let insideShop = false;
+/** Open air of the shop the player is standing in. Keeps the eye off the street facade. */
+let shopAir: ChaseConfine | null = null;
 
 const footWorld: PlayerWorld = {
   query(x, z, radius, out) {
@@ -412,9 +414,26 @@ function updateFoot(dt: number): void {
     const streamed = interiors.update(nanning, player.x, player.z, touch);
     furniture = streamed.colliders;
     insideShop = streamed.inside !== null;
+    const shell = streamed.inside;
+    if (shell) {
+      // Collision walls are 0.28 m. Stay far enough inside that the near
+      // plane (0.12) and the eye pad never touch them, including the door jambs.
+      const m = 0.62;
+      shopAir = {
+        minX: shell.cx - shell.depth / 2 + m,
+        maxX: shell.cx + shell.depth / 2 - m,
+        minZ: shell.cz - shell.width / 2 + m,
+        maxZ: shell.cz + shell.width / 2 - m,
+        minY: 0.4,
+        maxY: 2.45,
+      };
+    } else {
+      shopAir = null;
+    }
   } else {
     furniture = [];
     insideShop = false;
+    shopAir = null;
   }
 
   const m = controls.move(true);
@@ -695,7 +714,7 @@ function render(alpha: number, frameDt: number): void {
     vy: player.vy,
   });
   const head = avatarRig.limbs.head;
-  if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 1.05);
+  if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
 
   const carPose = vehicles.playerPoseInterp(alpha);
   const active =
@@ -720,7 +739,7 @@ function render(alpha: number, frameDt: number): void {
   if (mode === 'foot' && nanning && !heroShot) {
     const look = controls.consumeLook(frameDt);
     follow.pointerLocked = document.pointerLockElement != null;
-    let nBlocks = nanning.heightGrid.query(ax, az, 9, camBlocks);
+    let nBlocks = nanning.heightGrid.query(ax, az, 14, camBlocks);
     for (let i = 0; i < furniture.length; i++) {
       const box = furniture[i];
       if (!box.camBlock) continue;
@@ -737,6 +756,7 @@ function render(alpha: number, frameDt: number): void {
       look.y,
       camBlocks,
       nBlocks,
+      shopAir,
     );
   } else {
     controls.consumeLook(frameDt);
@@ -839,6 +859,8 @@ declare global {
       interiorProps(): { prop: string; shopId: string; x: number; z: number; w: number; d: number; h: number }[];
       readonly interior: boolean;
       readonly camDist: number;
+      readonly camBlocked: boolean;
+      readonly camEye: { x: number; y: number; z: number };
     };
   }
 }
@@ -904,6 +926,12 @@ window.__game = {
   },
   get camDist() {
     return follow.eyeDistance;
+  },
+  get camBlocked() {
+    return follow.eyeBlocked;
+  },
+  get camEye() {
+    return { x: env.camera.position.x, y: env.camera.position.y, z: env.camera.position.z };
   },
 };
 

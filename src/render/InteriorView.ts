@@ -96,6 +96,13 @@ function propGeometry(id: PropId): THREE.BufferGeometry {
         box(0.08, 0.4, 0.08, -0.28, 0.2, -0.45),
         box(0.08, 0.4, 0.08, 0.28, 0.2, 0.45),
       ]);
+    case 'menu':
+      return merged([
+        box(0.05, 0.7, 1.05, 0, 1.55, 0),
+        box(0.07, 0.08, 1.08, 0, 1.22, 0),
+        box(0.07, 0.06, 1.08, 0, 1.88, 0),
+        box(0.02, 0.5, 0.9, 0, 1.55, 0.03),
+      ]);
     default:
       return box(0.4, 0.4, 0.4, 0, 0.2, 0);
   }
@@ -111,11 +118,12 @@ const PROP_MAT: Record<PropId, number> = {
   steamer: STEEL,
   case: 0xd5dde6,
   grill: DARK,
+  menu: 0xf4efe4,
 };
 
 const PROP_IDS: PropId[] = [
   'table-square', 'table-round', 'table-high', 'stool', 'stool-high',
-  'counter', 'steamer', 'case', 'grill',
+  'counter', 'steamer', 'case', 'grill', 'menu',
 ];
 
 function shellOf(unit: ShopUnit, building: NanningBuilding): ShopShell {
@@ -273,10 +281,14 @@ export class InteriorView {
       parts.push(box(t, h, b.maxZ - b.minZ - 0.4, backX, cy, (b.minZ + b.maxZ) / 2));
       parts.push(box(b.maxX - b.minX - 0.5, h, t, (b.minX + b.maxX) / 2, cy, b.minZ + 0.22));
       parts.push(box(b.maxX - b.minX - 0.5, h, t, (b.minX + b.maxX) / 2, cy, b.maxZ - 0.22));
+      // Lid so a high orbit still reads as a room. The eye stays below 2.45.
+      parts.push(box(b.maxX - b.minX - 0.55, 0.06, b.maxZ - b.minZ - 0.55, (b.minX + b.maxX) / 2, y + 2.58, (b.minZ + b.maxZ) / 2));
     }
     if (!parts.length) return;
     const geo = merged(parts);
-    this.shellMesh = new THREE.Mesh(geo, mat(TILE, 0.9));
+    const shellMat = mat(TILE, 0.9);
+    shellMat.side = THREE.DoubleSide;
+    this.shellMesh = new THREE.Mesh(geo, shellMat);
     this.shellMesh.receiveShadow = true;
     this.shellMesh.castShadow = false;
     this.group.add(this.shellMesh);
