@@ -1,10 +1,10 @@
 {
-  "name": "GTA 7 — Definitely Not a Real Game",
-  "short_name": "GTA 7",
-  "description": "A browser-based, GTA-style 3D open-world driving slice.",
+  "name": "南宁街头 · Nanning GTA",
+  "short_name": "南宁街头",
+  "description": "跑在浏览器里的南宁开放世界：买奶茶、嗦老友粉、逛夜市、砸铺子、飙电瓶车。",
   "display": "fullscreen",
   "orientation": "landscape",
-  "background_color": "#05060a",
-  "theme_color": "#05060a",
+  "background_color": "#0a0908",
+  "theme_color": "#0a0908",
   "start_url": "."
 }

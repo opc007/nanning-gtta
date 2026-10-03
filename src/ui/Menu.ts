@@ -281,7 +281,7 @@ export class Menu {
 
   private applyVariant(): void {
     const title = this.variant === 'title';
-    this.header.textContent = title ? 'GTA 7 — Guns, Traffic & Anarchy' : 'PAUSED';
+    this.header.textContent = title ? '南宁街头 · Nanning GTA' : '暂停';
     this.header.style.fontSize = title ? '18px' : '22px';
     this.header.style.letterSpacing = title ? '1px' : '4px';
     this.titleActions.style.display = title ? 'flex' : 'none';

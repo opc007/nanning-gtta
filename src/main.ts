@@ -282,19 +282,33 @@ interface RadioManifest {
   baseUrl: string;
   stations: { name: string; tracks: { title: string; file: string }[] }[];
 }
-fetch('radio.json')
-  .then((r) => (r.ok ? (r.json() as Promise<RadioManifest>) : null))
-  .then((data) => {
-    if (!data?.stations?.length) return;
-    radio = new Radio(
-      data.stations.map((s) => ({
-        name: s.name,
-        tracks: s.tracks.map((t) => ({ title: t.title, url: data.baseUrl + t.file })),
-      })),
-    );
-    if (audioGestured) primeRadio(); // gesture already happened, manifest just landed
-  })
-  .catch(() => {});
+
+/**
+ * The upstream manifest streams MP3s from the gta7 author's GitHub Release. That
+ * is someone else's bandwidth to spend and someone else's link to break, so it
+ * is off unless we ship our own audio. `?radio=1` forces it on for local
+ * comparison; `?radio=0` (the default here) leaves the car silent apart from
+ * the synthesized engine, which is the part that matters anyway.
+ *
+ * TODO: a synthesized 邕州 radio — 五声音阶 loops generated in WebAudio, so
+ * there is no asset to host and nothing to go down.
+ */
+const RADIO_ENABLED = new URLSearchParams(location.search).get('radio') === '1';
+if (RADIO_ENABLED) {
+  fetch('radio.json')
+    .then((r) => (r.ok ? (r.json() as Promise<RadioManifest>) : null))
+    .then((data) => {
+      if (!data?.stations?.length) return;
+      radio = new Radio(
+        data.stations.map((s) => ({
+          name: s.name,
+          tracks: s.tracks.map((t) => ({ title: t.title, url: data.baseUrl + t.file })),
+        })),
+      );
+      if (audioGestured) primeRadio();
+    })
+    .catch(() => {});
+}
 
 let mode: Mode = nanning ? 'foot' : 'driving';
 player.x = city.center.x;
