@@ -14,6 +14,7 @@ import { footprintOverlaps, type Aabb3 } from './systems/Collision';
 import { StreamedWorld } from './world/StreamedWorld';
 import { SceneEnv } from './render/Scene';
 import { CityAssets } from './render/Assets';
+import { makeHumanoid, animateHumanoid, PLAYER_STYLE, type CharacterRig } from './render/character';
 import { Player } from './entities/Player';
 import { FollowCamera, CAR_CAM, FOOT_CAM, STREET_CAM, INTERIOR_CAM, type ChaseConfine } from './systems/FollowCamera';
 import { Vehicles } from './systems/Vehicles';
@@ -26,7 +27,7 @@ import { Menu } from './ui/Menu';
 import { Controls } from './core/Controls';
 import { GameLoop } from './core/GameLoop';
 import { loadOptions, saveOptions, qualityPixelRatio, type GameOptions } from './core/options';
-import { lerp, angleLerp, starsFromHeat, daylightFactor } from './core/math';
+import { lerp, angleLerp, angleDelta, starsFromHeat, daylightFactor } from './core/math';
 import { Radio } from './audio/Radio';
 import { Sfx } from './audio/Sfx';
 import { toMph, type VehicleInput } from './vehicles/VehicleModel';
@@ -147,8 +148,11 @@ if (streamedWorld) {
 
 }
 
-const avatarRig = buildCharacter(PROTAGONIST);
-const avatar = avatarRig.group;
+// Default is the lab-coat protagonist. `?skin=suit` keeps the v0.3 suit rig as an alternate.
+const suitSkin = urlParams.get('skin') === 'suit';
+const avatarRig = suitSkin ? null : buildCharacter(PROTAGONIST);
+const suitRig: CharacterRig | null = suitSkin ? makeHumanoid(PLAYER_STYLE) : null;
+const avatar = suitSkin ? suitRig!.group : avatarRig!.group;
 env.scene.add(avatar);
 // `?hero=1` is a portrait camera. A small fill keeps the coat and face readable
 // at night without changing the street's own lighting.
@@ -311,6 +315,16 @@ if (RADIO_ENABLED) {
     .catch(() => {});
 }
 
+// ?hud=0 strips every overlay. Used by the screenshot rig so a portrait of the
+// character isn't read through a minimap.
+const HUD_ON = urlParams.get('hud') !== '0';
+if (!HUD_ON) {
+  // Both overlay roots are direct children of #app with a high z-index.
+  const st = document.createElement('style');
+  st.textContent = '#app > div { display: none !important; }';
+  document.head.appendChild(st);
+}
+
 let mode: Mode = nanning ? 'foot' : 'driving';
 // The first car is spawned as the player's. On the food street you start on
 // foot beside it, so it has to be enterable (nearest() ignores playerIndex).
@@ -331,6 +345,10 @@ let health = MAX_HEALTH;
 let wasted = false;
 let wastedTimer = 0;
 let pedContact = false; // were we in contact with a car last frame (edge-trigger)
+let turnPrev = 0; // player's heading a frame ago, for the walk-cycle sidestep lean
+let airTime = 0; // seconds since the jump started
+let punchTimer = 0; // counts down through the punch animation
+const PUNCH_TIME = 0.32;
 
 // Wanted system: "heat" rises with crimes and decays after a grace period;
 // it maps to 0–5 stars, and each star is one chasing police car.
@@ -590,6 +608,8 @@ function flushCarWrecks(): void {
 
 function update(dt: number): void {
   player.savePrev();
+  airTime = player.grounded ? 0 : airTime + dt;
+  if (punchTimer > 0) punchTimer = Math.max(0, punchTimer - dt);
   timeOfDay = (timeOfDay + dt / dayLength) % 1;
 
   // Stream the world around the active position (car when driving, else avatar).
@@ -634,6 +654,7 @@ function update(dt: number): void {
     if (controls.attackPressed()) {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
+      punchTimer = PUNCH_TIME;
       const hitShop = session?.punch(player.x, player.z, dirX, dirZ) ?? false;
       if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ);
     }
@@ -705,22 +726,41 @@ function render(alpha: number, frameDt: number): void {
   const ay = lerp(player.py, player.y, alpha);
   const az = lerp(player.pz, player.z, alpha);
   const ah = angleLerp(player.ph, player.heading, alpha);
+  // Feet height already includes the arcade and interior floors.
   avatar.position.set(ax, ay, az);
   avatar.rotation.y = ah;
   avatar.visible = mode === 'foot';
-  avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
-    state: player.state === 'air' ? 'air' : player.state,
-    stateTime: player.sim.stateTime,
-    vy: player.vy,
-  });
-  const head = avatarRig.limbs.head;
-  if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
+  if (avatarRig) {
+    avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
+      state: player.state === 'air' ? 'air' : player.state,
+      stateTime: player.sim.stateTime,
+      vy: player.vy,
+    });
+    const head = avatarRig.limbs.head;
+    if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
+  } else if (suitRig) {
+    const onFoot = mode === 'foot';
+    let strafe = 0;
+    if (onFoot && player.speed > 0.05) {
+      const turn = angleDelta(turnPrev, ah);
+      strafe = Math.max(-1, Math.min(1, (turn / Math.max(frameDt, 1e-3)) * 0.16));
+    }
+    turnPrev = angleLerp(turnPrev, ah, 1 - Math.exp(-10 * frameDt));
+    animateHumanoid(suitRig, frameDt, onFoot ? player.speed : 0, {
+      strafe: onFoot ? strafe : 0,
+      air: onFoot && !player.grounded ? 1 : 0,
+      vy: player.vy,
+      airTime,
+      punch: punchTimer > 0 ? punchTimer / PUNCH_TIME : 0,
+      sitting: !onFoot,
+    });
+  }
 
   const carPose = vehicles.playerPoseInterp(alpha);
   const active =
     mode === 'driving' && carPose ? carPose : { x: ax, z: az, heading: ah, speed: player.speed };
   env.follow(active.x, active.z); // streamed ground/shadow/sun ride the player (no-op when finite)
-  lamp.position.set(active.x, 3.5, active.z);
+  lamp.position.set(active.x, 3.5 + (mode === 'foot' ? ay : 0), active.z);
   updateStreetlightPool(active.x, active.z);
   updateHeadlights(mode === 'driving' && carPose ? carPose : null);
 
@@ -736,52 +776,54 @@ function render(alpha: number, frameDt: number): void {
     camVx = Math.cos(ah) * player.speed;
     camVz = -Math.sin(ah) * player.speed;
   }
-  if (mode === 'foot' && nanning && !heroShot) {
-    const look = controls.consumeLook(frameDt);
-    follow.pointerLocked = document.pointerLockElement != null;
-    let nBlocks = nanning.heightGrid.query(ax, az, 14, camBlocks);
-    for (let i = 0; i < furniture.length; i++) {
-      const box = furniture[i];
-      if (!box.camBlock) continue;
-      camBlocks[nBlocks++] = box;
+  if (!(globalThis as unknown as { freezeCam?: boolean }).freezeCam) {
+    if (mode === 'foot' && nanning && !heroShot) {
+      const look = controls.consumeLook(frameDt);
+      follow.pointerLocked = document.pointerLockElement != null;
+      let nBlocks = nanning.heightGrid.query(ax, az, 14, camBlocks);
+      for (let i = 0; i < furniture.length; i++) {
+        const box = furniture[i];
+        if (!box.camBlock) continue;
+        camBlocks[nBlocks++] = box;
+      }
+      follow.updateOnFoot(
+        ax,
+        ay,
+        az,
+        ah,
+        insideShop ? INTERIOR_CAM : STREET_CAM,
+        frameDt,
+        look.x,
+        look.y,
+        camBlocks,
+        nBlocks,
+        shopAir,
+      );
+    } else {
+      controls.consumeLook(frameDt);
+      follow.update(active.x, active.z, active.heading, mode === 'driving' ? CAR_CAM : FOOT_CAM, frameDt, camVx, camVz, ay);
     }
-    follow.updateOnFoot(
-      ax,
-      ay,
-      az,
-      ah,
-      insideShop ? INTERIOR_CAM : STREET_CAM,
-      frameDt,
-      look.x,
-      look.y,
-      camBlocks,
-      nBlocks,
-      shopAir,
-    );
-  } else {
-    controls.consumeLook(frameDt);
-    follow.update(active.x, active.z, active.heading, mode === 'driving' ? CAR_CAM : FOOT_CAM, frameDt, camVx, camVz);
-  }
-  // `?hero=1` frames the protagonist for a close-up. The chase cam runs first
-  // so the rest of the frame is normal; this only overrides the final pose.
-  if (heroShot && mode === 'foot') {
-    env.camera.position.set(ax + 1.15, 1.12, az + 1.0);
-    env.camera.lookAt(ax, 0.9, az);
-    heroFill?.position.set(ax + 0.85, 1.55, az + 0.65);
+    // `?hero=1` frames the protagonist for a close-up. The chase cam runs first
+    // so the rest of the frame is normal; this only overrides the final pose.
+    if (heroShot && mode === 'foot') {
+      env.camera.position.set(ax + 1.15, ay + 1.12, az + 1.0);
+      env.camera.lookAt(ax, ay + 0.9, az);
+      heroFill?.position.set(ax + 0.85, ay + 1.55, az + 0.65);
+    }
   }
 
   const speedMph = mode === 'driving' ? toMph(vehicles.playerForwardSpeed()) : toMph(player.speed);
   // The health bar reads car integrity while driving, avatar health on foot.
   const shownHealth = mode === 'driving' ? vehicles.playerCarHealth() : health;
-  hud.update(speedMph, mode, active, vehicles.positions(), shownHealth, wasted);
-  hud.setRunOverCount(peds.runOverCount);
-  hud.setCarName(mode === 'driving' ? vehicles.playerCarName() : null);
+  if (HUD_ON) hud.update(speedMph, mode, active, vehicles.positions(), shownHealth, wasted);
+  if (HUD_ON) hud.setRunOverCount(peds.runOverCount);
+  if (HUD_ON) hud.setCarName(mode === 'driving' ? vehicles.playerCarName() : null);
   // Radio readout is a dashboard thing — only show it while driving (the audio
   // itself still fades out with distance as you walk away).
-  hud.setRadio(mode === 'driving' ? (radio ? radio.label() : '📻 OFF') : '');
-  hud.setWanted(stars, wantedCooling);
-  hud.setClock(timeOfDay);
-  hud.setBusted(busted);
+  if (HUD_ON) hud.setRadio(mode === 'driving' ? (radio ? radio.label() : '📻 OFF') : '');
+  if (HUD_ON) hud.setWanted(stars, wantedCooling);
+  if (HUD_ON) hud.setClock(timeOfDay);
+  if (HUD_ON) hud.setBusted(busted);
 
   if (session) {
     session.tick(frameDt, timeOfDay, player.x, player.z, mode === 'foot', heat, follow.yaw, env.scene, daylightFactor(timeOfDay));
