@@ -15,7 +15,7 @@
 
 import type { City, Building, Lane, Streetlight, Prop, ParkingSpot } from '../world/City';
 import { SpatialGrid } from '../systems/SpatialGrid';
-import type { Aabb } from '../systems/Collision';
+import type { Aabb, Aabb3 } from '../systems/Collision';
 import { SHOPS, STALLS, type ShopDef, type StreetSection } from './data';
 
 export const STREET_Z0 = -150;
@@ -114,6 +114,9 @@ export interface NanningCity extends City {
   zones: AreaZone[];
   alley: Alley;
   surfaceQuads: { x: number; z: number; w: number; d: number; kind: 'bluestone' | 'asphalt' | 'plaza' | 'riverside' }[];
+  /** Walls, steps, ceilings. The 2D `grid` does not contain walkable floors. */
+  heightBoxes: Aabb3[];
+  heightGrid: SpatialGrid<Aabb3>;
 }
 
 const rnd = (seed: number) => {
@@ -126,6 +129,36 @@ const rnd = (seed: number) => {
 
 function rect(cx: number, cz: number, w: number, d: number): Aabb {
   return { minX: cx - w / 2, minZ: cz - d / 2, maxX: cx + w / 2, maxZ: cz + d / 2 };
+}
+
+function volume(box: Aabb, minY: number, maxY: number, kind: Aabb3['kind'], camBlock = false): Aabb3 {
+  return { ...box, minY, maxY, kind, camBlock };
+}
+
+/** Party walls, back wall, and the two door jambs. The doorway itself is open. */
+function shopWalls(cx: number, cz: number, depth: number, frontage: number, side: -1 | 1): Aabb[] {
+  const minX = cx - depth / 2;
+  const maxX = cx + depth / 2;
+  const minZ = cz - frontage / 2;
+  const maxZ = cz + frontage / 2;
+  const t = 0.28;
+  const doorW = Math.min(2.6, Math.max(1.8, frontage * 0.22));
+  const door0 = cz - doorW / 2;
+  const door1 = cz + doorW / 2;
+  const walls: Aabb[] = [
+    { minX, maxX, minZ, maxZ: minZ + t },
+    { minX, maxX, minZ: maxZ - t, maxZ },
+  ];
+  if (side > 0) {
+    walls.push({ minX: maxX - t, maxX, minZ, maxZ });
+    if (door0 > minZ + t) walls.push({ minX, maxX: minX + t, minZ: minZ + t, maxZ: door0 });
+    if (door1 < maxZ - t) walls.push({ minX, maxX: minX + t, minZ: door1, maxZ: maxZ - t });
+  } else {
+    walls.push({ minX, maxX: minX + t, minZ, maxZ });
+    if (door0 > minZ + t) walls.push({ minX: maxX - t, maxX, minZ: minZ + t, maxZ: door0 });
+    if (door1 < maxZ - t) walls.push({ minX: maxX - t, maxX, minZ: door1, maxZ: maxZ - t });
+  }
+  return walls;
 }
 
 /** Walk `dist` metres along a list of [z0,z1] spans. */
@@ -150,6 +183,14 @@ export function generateNanningCity(seed = 1945): NanningCity {
   const stalls: Stall[] = [];
   const shops: ShopUnit[] = [];
   const surfaceQuads: NanningCity['surfaceQuads'] = [];
+  const heightBoxes: Aabb3[] = [];
+  const addSolid = (box: Aabb, maxY = 4, minY = 0): void => {
+    colliders.push(box);
+    heightBoxes.push(volume(box, minY, maxY, 'solid', true));
+  };
+  const addWalk = (box: Aabb, maxY: number, minY = 0): void => {
+    heightBoxes.push(volume(box, minY, maxY, 'walkable', false));
+  };
 
   const alley: Alley = {
     cx: -(STREET_HALF + ALLEY_DEPTH / 2),
@@ -219,7 +260,30 @@ export function generateNanningCity(seed = 1945): NanningCity {
           slot: { index: i, offset: 0, width: frontage },
         };
         buildings.push(b);
-        colliders.push(rect(cx, zc, inland, frontage));
+        const sideSign = side < 0 ? -1 : 1;
+        for (const wall of shopWalls(cx, zc, inland, frontage, sideSign)) addSolid(wall, 4);
+        // Lintel over the door, tall enough to jump through, short enough to read as a shopfront.
+        const doorW = Math.min(2.6, Math.max(1.8, frontage * 0.22));
+        const frontX = sideSign > 0 ? cx - inland / 2 : cx + inland / 2;
+        heightBoxes.push(
+          volume(
+            { minX: frontX - 0.14, maxX: frontX + 0.14, minZ: zc - doorW / 2, maxZ: zc + doorW / 2 },
+            2.55,
+            4,
+            'solid',
+            true,
+          ),
+        );
+        // Interior floor, level with the arcade. Not a 2D collider — you walk on it.
+        addWalk(
+          {
+            minX: cx - inland / 2 + 0.3,
+            maxX: cx + inland / 2 - 0.3,
+            minZ: zc - frontage / 2 + 0.3,
+            maxZ: zc + frontage / 2 - 0.3,
+          },
+          ARCADE_RAISE,
+        );
         shops.push({
           id: `${side < 0 ? 'w' : 'e'}-${section.id}-${i}`,
           def,
@@ -267,22 +331,46 @@ export function generateNanningCity(seed = 1945): NanningCity {
     });
   }
 
+  // ── Raised arcade. A 0.15 m step, no horizontal push. Ceiling blocks the camera.
+  const pushArcade = (side: -1 | 1, z0: number, z1: number): void => {
+    const span: Aabb = {
+      minX: Math.min(side * STREET_HALF, side * (STREET_HALF + ARCADE_DEPTH)),
+      maxX: Math.max(side * STREET_HALF, side * (STREET_HALF + ARCADE_DEPTH)),
+      minZ: z0,
+      maxZ: z1,
+    };
+    addWalk(span, ARCADE_RAISE);
+    heightBoxes.push(volume(span, 3.02, 3.28, 'solid', true));
+  };
+  pushArcade(1, STREET_Z0, STREET_Z1);
+  pushArcade(-1, STREET_Z0, -ALLEY_WIDTH / 2);
+  pushArcade(-1, ALLEY_WIDTH / 2, STREET_Z1);
+
+  // Columns on the carriageway edge of the arcade. Same spacing as the scenery.
+  for (let z = STREET_Z0 + 1.2; z < STREET_Z1 - 0.6; z += 4.4) {
+    for (const side of [-1, 1] as const) {
+      if (side < 0 && Math.abs(z) < ALLEY_WIDTH / 2 + 0.4) continue;
+      addSolid(rect(side * STREET_HALF, z, 0.32, 0.32), 3.15);
+    }
+  }
+
   // ── Dead-end alley walls (west). Shop boxes already stop at the mouth. ──
   // The alley runs from the carriageway edge 15 m inland, past the shop backs.
-  colliders.push(rect(alley.minX - 0.2, 0, 0.4, ALLEY_WIDTH));
+  addSolid(rect(alley.minX - 0.2, 0, 0.4, ALLEY_WIDTH), 3);
   const pastShops = SHOP_BACK - (STREET_HALF + ALLEY_DEPTH);
   // Side returns from the shop back wall to the dead end.
   if (pastShops < 0) {
     const extra = -pastShops;
     const mid = alley.minX + extra / 2;
-    colliders.push(rect(mid, -ALLEY_WIDTH / 2, extra, 0.35));
-    colliders.push(rect(mid, ALLEY_WIDTH / 2, extra, 0.35));
+    addSolid(rect(mid, -ALLEY_WIDTH / 2, extra, 0.35), 3);
+    addSolid(rect(mid, ALLEY_WIDTH / 2, extra, 0.35), 3);
   }
 
   // ── Barriers. Seal the street so you cannot walk onto the cross roads
   //    or around the end of the arcade. Cars live at |z| = 168, clear of this.
   for (const z of [STREET_Z0 - 0.35, STREET_Z1 + 0.35]) {
-    colliders.push(rect(0, z, 48, 0.55));
+    // 1.1 m rail: a jump (0.75) plus a step (0.30) still comes up short.
+    addSolid(rect(0, z, 48, 0.55), 1.1);
   }
 
   // ── Backdrop blocks behind the shops, so the street is not a floating set.
@@ -305,7 +393,7 @@ export function generateNanningCity(seed = 1945): NanningCity {
         kind: 'block',
         floors: Math.max(2, Math.floor(h / 3.2)),
       });
-      colliders.push(rect(cx, z, w, d));
+      addSolid(rect(cx, z, w, d), h);
     }
   }
 
@@ -373,5 +461,7 @@ export function generateNanningCity(seed = 1945): NanningCity {
     zones,
     alley,
     surfaceQuads,
+    heightBoxes,
+    heightGrid: new SpatialGrid(heightBoxes, 8),
   };
 }

@@ -10,12 +10,19 @@
 
 import * as THREE from 'three';
 import type { CharacterDef } from './types';
+import { advancePhase, computePose, createPose, poseStateFrom, type JointName } from './pose';
+
+export interface CharacterAnim {
+  state: string;
+  stateTime: number;
+  vy: number;
+}
 
 export interface CharacterRig {
   group: THREE.Group;
   /** Named joints. Keys are stable: hips, torso, head, upperArmL, lowerArmL, ... */
   readonly limbs: Record<string, THREE.Object3D>;
-  update(speed: number, dt: number): void;
+  update(speed: number, dt: number, anim?: CharacterAnim): void;
 }
 
 const mat = (color: number, roughness = 0.78): THREE.MeshStandardMaterial =>
@@ -229,20 +236,31 @@ export function buildCharacter(def: CharacterDef): CharacterRig {
   // Shorts cover the top of the thighs. Already on the hips.
 
   let phase = 0;
-  const update = (speed: number, dt: number): void => {
-    const moving = speed > 0.25;
-    phase += dt * (moving ? 2.1 + speed * 0.85 : 1.4);
-    const amp = moving ? Math.min(0.55, 0.18 + speed * 0.05) : 0.04;
-    const swing = Math.sin(phase) * amp;
-    // Rotation around Z pitches the limb along +X, which is forward.
-    legL.rotation.z = swing;
-    legR.rotation.z = -swing;
-    armL.rotation.z = -swing * 0.75;
-    armR.rotation.z = swing * 0.75;
-    // A small idle breath so a still portrait isn't a statue.
-    const breath = moving ? 0 : Math.sin(phase) * 0.012;
-    torso.scale.y = 1 + breath;
-    torso.position.y = 0.06 + breath * 0.4;
+  const pose = createPose();
+  const bindY: Record<string, number> = {};
+  for (const [name, limb] of Object.entries(limbs)) bindY[name] = limb.position.y;
+
+  const update = (speed: number, dt: number, anim?: CharacterAnim): void => {
+    const state = poseStateFrom(anim?.state ?? (speed > 0.25 ? 'jog' : 'idle'), anim?.vy ?? 0);
+    phase = advancePhase(phase, Math.max(0, speed) * dt, state);
+    computePose(
+      {
+        state,
+        stateTime: anim?.stateTime ?? 0,
+        phase,
+        speed,
+        vy: anim?.vy ?? 0,
+        lean: 0,
+      },
+      pose,
+    );
+    for (const [name, limb] of Object.entries(limbs)) {
+      const j = pose[name as JointName];
+      if (!j) continue;
+      limb.rotation.set(j.rx, j.ry, j.rz);
+      const base = bindY[name];
+      if (base !== undefined) limb.position.y = base + j.dy;
+    }
   };
 
   return { group, limbs, update };

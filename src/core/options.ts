@@ -18,7 +18,8 @@ export interface GameOptions {
 export const DEFAULT_OPTIONS: GameOptions = {
   masterVolume: 0.8,
   quality: 'high',
-  dayLength: 480,
+  // 1440 real seconds = 24 game hours, so 1 real second is 1 game minute.
+  dayLength: 1440,
 };
 
 const DAY_LENGTH_RANGE = { min: 30, max: 1800 } as const;

@@ -1,112 +1,92 @@
+import { createPlayerSim, type PlayerSim, type PlayerState } from '../player/PlayerController';
+
 /**
- * On-foot avatar.
- *
- * Movement is camera-relative (the caller supplies a desired world direction);
- * the avatar accelerates toward it and yaws to face travel. Collision is
- * resolved by the caller against the shared building colliders.
- *
- * This version adds the vertical axis the base game never had: gravity, a
- * grounded test, and a real jump. The base was a strictly 2D sidewalk sim —
- * no hop, no air, no reason to leave the ground plane, which is exactly the
- * feeling that makes an open-world game read as a corridor.
+ * On-foot avatar. The numbers live in a pure `PlayerSim`; this class is the
+ * handle `main` and the e2e harness already poke (`player.x`, `player.heading`).
+ * Collision and integration happen in `stepPlayer`, which the caller runs.
  */
-
-import { angleDelta, clamp } from '../core/math';
-
-const WALK = 4.2;
-const RUN = 8.4;
-const TURN = 12; // rad/s the avatar rotates toward its travel direction
-
-export const GRAVITY = 22; // m/s² — heavier than real, reads better at game scale
-export const JUMP_V = 7.2; // ~1.2 m apex, enough to clear a kerb or a low wall
-const AIR_CONTROL = 0.32; // fraction of ground steering authority retained airborne
-const COYOTE = 0.12; // seconds of grace after leaving a ledge
-
 export class Player {
-  x = 0;
-  z = 0;
-  y = 0; // feet height above the street
-  vy = 0; // vertical velocity
-  heading = 0;
-  speed = 0;
-  grounded = true;
-  /** Counts down after leaving ground without a jump — the coyote window. */
-  private airTime = 0;
-  /** Just landed this step, for a dust puff / camera dip. */
-  justLanded = false;
-  justJumped = false;
-
-  // Previous-step pose for render interpolation.
+  readonly sim: PlayerSim;
   px = 0;
-  pz = 0;
   py = 0;
+  pz = 0;
   ph = 0;
+
+  constructor(x = 0, z = 0) {
+    this.sim = createPlayerSim(x, z, 0);
+  }
+
+  get x(): number {
+    return this.sim.x;
+  }
+  set x(v: number) {
+    this.sim.x = v;
+  }
+  get y(): number {
+    return this.sim.y;
+  }
+  set y(v: number) {
+    this.sim.y = v;
+  }
+  get z(): number {
+    return this.sim.z;
+  }
+  set z(v: number) {
+    this.sim.z = v;
+  }
+  get heading(): number {
+    return this.sim.heading;
+  }
+  set heading(v: number) {
+    this.sim.heading = v;
+  }
+  get speed(): number {
+    return Math.hypot(this.sim.vx, this.sim.vz);
+  }
+  get vx(): number {
+    return this.sim.vx;
+  }
+  get vz(): number {
+    return this.sim.vz;
+  }
+  get vy(): number {
+    return this.sim.vy;
+  }
+  get grounded(): boolean {
+    return this.sim.grounded;
+  }
+  get stamina(): number {
+    return this.sim.stamina;
+  }
+  get state(): PlayerState {
+    return this.sim.state;
+  }
+  get stance(): 'stand' | 'crouch' {
+    return this.sim.stance;
+  }
 
   /** Snapshot the current pose as the previous one (call once per fixed step). */
   savePrev(): void {
-    this.px = this.x;
-    this.pz = this.z;
-    this.py = this.y;
-    this.ph = this.heading;
+    this.px = this.sim.x;
+    this.py = this.sim.y;
+    this.pz = this.sim.z;
+    this.ph = this.sim.heading;
   }
 
-  /** Launch a jump. Ignored in the air and during the coyote window. */
-  jump(): boolean {
-    if (this.grounded || this.airTime <= COYOTE) {
-      this.vy = JUMP_V;
-      this.grounded = false;
-      this.airTime = COYOTE + 0.01;
-      this.justJumped = true;
-      return true;
-    }
-    return false;
-  }
-
-  /** dirX/dirZ: desired world-space move direction (need not be normalized). */
-  update(dirX: number, dirZ: number, running: boolean, dt: number): void {
-    this.justLanded = false;
-    this.justJumped = false;
-
-    const mag = Math.hypot(dirX, dirZ);
-    const maxSpeed = running ? RUN : WALK;
-    // Air control is deliberately weak: a jump should commit you to an arc.
-    const authority = this.grounded ? 1 : AIR_CONTROL;
-
-    if (mag > 1e-3) {
-      const nx = dirX / mag;
-      const nz = dirZ / mag;
-      this.speed = maxSpeed * (this.grounded ? 1 : 0.82);
-      this.x += nx * this.speed * dt * authority + (this.grounded ? 0 : 0);
-      this.z += nz * this.speed * dt * authority;
-
-      const target = Math.atan2(-nz, nx);
-      // Turning is slower in the air, which is what makes a mid-air turn feel
-      // like a decision rather than a free correction.
-      const rate = TURN * (this.grounded ? 1 : 0.45);
-      this.heading += clamp(angleDelta(this.heading, target), -rate * dt, rate * dt);
-    } else {
-      this.speed = 0;
-    }
-
-    // Vertical integration.
-    if (!this.grounded || this.vy !== 0) {
-      this.vy -= GRAVITY * dt;
-      this.y += this.vy * dt;
-      this.airTime += dt;
-      if (this.y <= 0) {
-        this.y = 0;
-        this.vy = 0;
-        if (!this.grounded) this.justLanded = true;
-        this.grounded = true;
-        this.airTime = 0;
-      } else {
-        this.grounded = false;
-      }
-    }
-  }
-
-  /** Height of the hips, for the camera and for shadow placement. */
-  get eyeHeight(): number {
-    return 1.62 + this.y;
+  /** Zero velocity and plant the feet. Used by respawn, e2e, and screenshots. */
+  teleport(x: number, z: number, heading?: number): void {
+    this.sim.x = x;
+    this.sim.z = z;
+    this.sim.y = 0;
+    this.sim.vx = 0;
+    this.sim.vy = 0;
+    this.sim.vz = 0;
+    this.sim.grounded = true;
+    this.sim.groundY = 0;
+    this.sim.fallFrom = 0;
+    this.sim.landTimer = 0;
+    this.sim.coyote = 0.1;
+    if (heading !== undefined) this.sim.heading = heading;
+    this.savePrev();
   }
 }

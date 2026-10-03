@@ -55,6 +55,17 @@ try {
     JSON.stringify(iconified),
   );
 
+  // The street starts on foot, and the spawn ride waits on 民族大道, well
+  // outside enter range of the street-center spawn. Walk up to it, then mount.
+  const mount = await center(page, '#tc-enter');
+  await page.evaluate(() => {
+    const g = window.__game;
+    const c = g.vehicles.cars[0];
+    g.teleport(c.x + 2.4, c.z, 0);
+  });
+  await page.touchscreen.tap(mount.x, mount.y);
+  await page.waitForFunction(() => window.__game.mode === 'driving', { timeout: 8000 });
+
   // Joystick: push up and the car should accelerate from rest.
   const stick = await center(page, '#tc-stick');
   await page.evaluate((p) => {
@@ -67,16 +78,21 @@ try {
       new PointerEvent('pointermove', { pointerId: 1, clientX: p.x, clientY: p.y - 55, bubbles: true }),
     );
   }, stick);
-  // Poll while the stick is held — the slow headless renderer under-steps the
-  // (deliberately gentle) acceleration in a fixed wait.
+  // Poll while the stick is held. The e-bike needs ~0.6 s of SIM time to
+  // clear 6 m/s, and headless frames are far apart.
   let speed = 0;
-  for (let i = 0; i < 30 && speed <= 6; i++) {
-    await page.waitForTimeout(150);
-    speed = await page.evaluate(() => {
+  const stickT0 = await page.evaluate(() => window.__game.timeOfDay);
+  for (let i = 0; i < 100 && speed <= 6; i++) {
+    await page.waitForTimeout(100);
+    const sample = await page.evaluate((t0) => {
       const v = window.__game.vehicles;
       const c = v.cars[v.playerIndex];
-      return Math.hypot(c.vx, c.vz);
-    });
+      let d = window.__game.timeOfDay - t0;
+      if (d < -0.5) d += 1;
+      return { speed: Math.hypot(c.vx, c.vz), sim: d * 1440 };
+    }, stickT0);
+    speed = sample.speed;
+    if (sample.sim > 2) break;
   }
   await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true })));
   check('joystick drives the car forward', speed > 6, `speed=${speed.toFixed(1)} m/s`);
@@ -107,6 +123,7 @@ try {
   if (!results.some((r) => r.name === 'no page errors (mobile)')) {
     check('no page errors (mobile)', true);
   }
+  await mobile.close();
 
   // --- Desktop context: no touch UI should be created.
   const desktop = await browser.newContext({ viewport: { width: 1024, height: 640 } });

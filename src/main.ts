@@ -1,16 +1,22 @@
 import * as THREE from 'three';
 import { DEFAULT_CITY, type City } from './world/City';
-import { generateNanningCity, STREET_HALF, ARCADE_DEPTH, ALLEY_WIDTH, type NanningCity } from './nanning/layout';
+import { generateNanningCity, type NanningCity } from './nanning/layout';
+import { SHOPS, STALLS } from './nanning/data';
+import { displayShopName, shopNameModeFrom } from './nanning/shopNames';
 import { NanningSession } from './session/nanningSession';
 import { buildCharacter } from './characters/buildCharacter';
 import { PROTAGONIST } from './characters/protagonist';
+import { InteriorView } from './render/InteriorView';
+import { stepPlayer, type PlayerWorld } from './player/PlayerController';
+import { PLAYER } from './player/params';
+import { footprintOverlaps, type Aabb3 } from './systems/Collision';
 
 import { StreamedWorld } from './world/StreamedWorld';
 import { SceneEnv } from './render/Scene';
 import { CityAssets } from './render/Assets';
 import { makeHumanoid, animateHumanoid, PLAYER_STYLE, type CharacterRig } from './render/character';
 import { Player } from './entities/Player';
-import { FollowCamera, CAR_CAM, FOOT_CAM } from './systems/FollowCamera';
+import { FollowCamera, CAR_CAM, FOOT_CAM, STREET_CAM, INTERIOR_CAM, type ChaseConfine } from './systems/FollowCamera';
 import { Vehicles } from './systems/Vehicles';
 import { Pedestrians } from './systems/Pedestrians';
 import { Debris } from './systems/Debris';
@@ -34,13 +40,13 @@ function isTouchDevice(): boolean {
   return matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 }
 
-const FOOT_RADIUS = 0.4;
+const FOOT_RADIUS = PLAYER.radius;
 const ENTER_DISTANCE = 6; // generous so curbside parked cars are easy to get into
 const ENGINE_HEAR = 28; // on foot, how far a parked car's idle is audible
 const STEP_DISTANCE = 1.7; // metres of travel between footstep sounds
 let footAccum = 0;
 
-let dayLength = 480; // seconds for a full day/night cycle (overridden by options)
+let dayLength = 1440; // 1 real second = 1 game minute (overridden by options)
 let timeOfDay = 0; // [0,1), 0 = midnight (the base game's night look)
 
 const container = document.getElementById('app')!;
@@ -60,6 +66,12 @@ const gameMode = urlParams.get('mode') ?? 'explore';
 const streaming = urlParams.get('stream') === '1';
 /** Close-up of the protagonist. Used by the hero screenshot, not by play. */
 const heroShot = urlParams.get('hero') === '1';
+// `?hud=0` hides every DOM overlay so screenshots show the scene.
+if (urlParams.get('hud') === '0') {
+  const style = document.createElement('style');
+  style.textContent = '#app > div{visibility:hidden !important}';
+  document.head.appendChild(style);
+}
 let heat = 0;
 const config = { ...DEFAULT_CITY, seed: worldSeed };
 const assets = new CityAssets(config.seed);
@@ -71,6 +83,16 @@ const assets = new CityAssets(config.seed);
 let streamedWorld: StreamedWorld | null = null;
 let city: City;
 let nanning: NanningCity | null = null;
+// Real shop names stay unless `?names=fictional` (or VITE_SHOP_NAMES) is set.
+// Applied before the street is generated so signs, prompts, and the layout agree.
+{
+  const viteNames = (import.meta.env as { VITE_SHOP_NAMES?: string }).VITE_SHOP_NAMES;
+  const nameMode = shopNameModeFrom(location.search, viteNames);
+  if (nameMode === 'fictional') {
+    for (const s of SHOPS) s.name = displayShopName(s.id, s.name, nameMode);
+    for (const s of STALLS) s.name = displayShopName(s.id, s.name, nameMode);
+  }
+}
 if (streaming) {
   const chunkGroups = new Map<string, THREE.Group>();
   streamedWorld = new StreamedWorld(config, {
@@ -103,11 +125,10 @@ if (streaming) {
 
 // Nanning opens at ~19:00: the 夜市 lanterns and shopfront neon are the whole
 // point of the map, and you can't judge any of it in the dark.
-// ?t=0..1 overrides the clock. 0.79 is dusk; ?t=0.45 gives flat midday light,
-// which is the only honest way to judge a model that is normally seen at night.
+// `?t=` pins the clock (0.45 is flat daylight) so material shots aren't dusk.
 if (nanning) {
   const tParam = Number(urlParams.get('t'));
-  timeOfDay = urlParams.get('t') !== null && Number.isFinite(tParam) ? tParam : 0.79;
+  timeOfDay = urlParams.get('t') !== null && Number.isFinite(tParam) ? Math.min(0.999, Math.max(0, tParam)) : 0.79;
 }
 
 const env = new SceneEnv(container, city, {
@@ -157,6 +178,13 @@ const sfx = new Sfx();
 
 // The street session is built after the scene exists. `completeMission` is a
 // function declaration, so the payout callback can close over it.
+let interiors: InteriorView | null = null;
+if (nanning) {
+  interiors = new InteriorView(env.scene);
+  // Interior orbit sits close to walls; the old 0.5 m near plane clips the doorway.
+  env.camera.near = 0.12;
+  env.camera.updateProjectionMatrix();
+}
 if (nanning) {
   session = new NanningSession({
     scene: env.scene,
@@ -298,10 +326,14 @@ if (!HUD_ON) {
 }
 
 let mode: Mode = nanning ? 'foot' : 'driving';
+// The first car is spawned as the player's. On the food street you start on
+// foot beside it, so it has to be enterable (nearest() ignores playerIndex).
+if (mode === 'foot') vehicles.exit();
 player.x = city.center.x;
 player.z = city.center.z;
 // Face south, down the street toward the night market. Forward is (cos h, -sin h).
 if (nanning) player.heading = -Math.PI / 2;
+follow.snapBehind(player.heading, player.x, player.z, player.y, nanning ? STREET_CAM : FOOT_CAM);
 
 const MAX_HEALTH = 100;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
@@ -347,11 +379,12 @@ function toggleVehicle(): void {
   if (mode === 'driving') {
     const pose = vehicles.playerPose()!;
     // Step out to the left of the car.
-    player.x = pose.x - Math.sin(pose.heading) * 2.4;
-    player.z = pose.z - Math.cos(pose.heading) * 2.4;
-    player.heading = pose.heading;
+    const x = pose.x - Math.sin(pose.heading) * 2.4;
+    const z = pose.z - Math.cos(pose.heading) * 2.4;
     vehicles.exit();
     mode = 'foot';
+    player.teleport(x, z, pose.heading);
+    follow.snapBehind(pose.heading, x, z, 0, STREET_CAM);
     sfx.exitCar();
   } else {
     const i = vehicles.nearest(player.x, player.z, ENTER_DISTANCE);
@@ -375,19 +408,88 @@ function drivingInput(): VehicleInput {
   };
 }
 
+let furniture: Aabb3[] = [];
+let insideShop = false;
+/** Open air of the shop the player is standing in. Keeps the eye off the street facade. */
+let shopAir: ChaseConfine | null = null;
+
+const footWorld: PlayerWorld = {
+  query(x, z, radius, out) {
+    let n = nanning ? nanning.heightGrid.query(x, z, radius, out) : 0;
+    for (let i = 0; i < furniture.length; i++) {
+      const box = furniture[i];
+      if (!footprintOverlaps(x, z, radius, box)) continue;
+      out[n++] = box;
+    }
+    return n;
+  },
+};
+
+const camBlocks: Aabb3[] = [];
+
 function updateFoot(dt: number): void {
-  const yaw = follow.yaw;
+  if (interiors && nanning) {
+    const streamed = interiors.update(nanning, player.x, player.z, touch);
+    furniture = streamed.colliders;
+    insideShop = streamed.inside !== null;
+    const shell = streamed.inside;
+    if (shell) {
+      // Collision walls are 0.28 m. Stay far enough inside that the near
+      // plane (0.12) and the eye pad never touch them, including the door jambs.
+      const m = 0.62;
+      shopAir = {
+        minX: shell.cx - shell.depth / 2 + m,
+        maxX: shell.cx + shell.depth / 2 - m,
+        minZ: shell.cz - shell.width / 2 + m,
+        maxZ: shell.cz + shell.width / 2 - m,
+        minY: 0.4,
+        maxY: 2.45,
+      };
+    } else {
+      shopAir = null;
+    }
+  } else {
+    furniture = [];
+    insideShop = false;
+    shopAir = null;
+  }
+
   const m = controls.move(true);
-  const cos = Math.cos(yaw);
-  const sin = Math.sin(yaw);
-  const dirX = cos * m.y + sin * m.x;
-  const dirZ = -sin * m.y + cos * m.x;
+  const events = stepPlayer(
+    player.sim,
+    {
+      moveX: m.x,
+      moveY: m.y,
+      camYaw: follow.moveYaw,
+      sprint: controls.sprint(true),
+      walkMod: controls.walkMod(),
+      crouchPressed: controls.crouchPressed(),
+      jumpPressed: controls.jumpPressed(),
+      jumpHeld: controls.jumpHeld(),
+    },
+    footWorld,
+    dt,
+    { speedMul: 1, carry: 'none', satiety: session?.shops.wallet.satiety ?? 80 },
+  );
+  // Grab is wired (G / right click / Y) and intentionally does nothing until props exist.
+  controls.grabPressed();
 
-  player.update(dirX, dirZ, controls.sprint(true), dt);
+  for (const ev of events) {
+    if (ev.kind === 'fallDamage') {
+      health -= ev.amount;
+      if (health <= 0) enterWasted();
+    }
+  }
 
-  const fixed = city.grid.resolve(player.x, player.z, FOOT_RADIUS);
-  player.x = fixed.x;
-  player.z = fixed.z;
+  // Streamed cities have no height boxes. Keep the old flat push-out there.
+  if (!nanning) {
+    const fixed = city.grid.resolve(player.x, player.z, FOOT_RADIUS);
+    player.x = fixed.x;
+    player.z = fixed.z;
+    player.y = 0;
+    player.sim.vy = 0;
+    player.sim.grounded = true;
+  }
   if (session) {
     const offStall = session.resolveStalls(player.x, player.z, FOOT_RADIUS);
     player.x = offStall.x;
@@ -418,9 +520,8 @@ function respawn(): void {
   sinceUnseen = 0;
   wantedCooling = false;
   mode = 'foot';
-  player.x = city.center.x;
-  player.z = city.center.z + 6;
-  player.heading = 0;
+  player.teleport(city.center.x, city.center.z + 6, nanning ? -Math.PI / 2 : 0);
+  follow.snapBehind(player.heading, player.x, player.z, 0, STREET_CAM);
 }
 
 function enterBusted(): void {
@@ -531,12 +632,9 @@ function update(dt: number): void {
     return;
   }
 
-  // E does double duty in 南宁: at a shopfront it opens the buy panel, and if
-  // the panel is already open it closes it. Anywhere else it enters/exits a car.
-  if (controls.enterExitPressed()) {
-    const consumed = session?.interact(mode === 'foot') ?? false;
-    if (!consumed) toggleVehicle();
-  }
+  // E opens or closes a shop. F is the only key that enters or leaves a car.
+  if (mode === 'foot' && controls.interactPressed()) session?.interact(true);
+  if (controls.mountPressed()) toggleVehicle();
 
   updateWanted(dt);
   const chase = stars > 0 ? chaseTarget() : null;
@@ -551,12 +649,9 @@ function update(dt: number): void {
     updateFoot(dt);
     checkPedestrianDamage();
 
-    // Jump. Drives the vertical axis the base game simply didn't have.
-    if (controls.jumpPressed()) player.jump();
-
     // Punch: whatever's in front of you. A 骑楼 shopfront takes the hit and
     // starts losing integrity; otherwise it's a pedestrian.
-    if (controls.punchPressed()) {
+    if (controls.attackPressed()) {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
       punchTimer = PUNCH_TIME;
@@ -628,19 +723,21 @@ function render(alpha: number, frameDt: number): void {
   debris.render(alpha); // shared pool, drawn once per frame
 
   const ax = lerp(player.px, player.x, alpha);
-  const az = lerp(player.pz, player.z, alpha);
   const ay = lerp(player.py, player.y, alpha);
+  const az = lerp(player.pz, player.z, alpha);
   const ah = angleLerp(player.ph, player.heading, alpha);
-  const onArcade =
-    !!nanning &&
-    Math.abs(ax) > STREET_HALF &&
-    Math.abs(ax) < STREET_HALF + ARCADE_DEPTH &&
-    !(ax < 0 && Math.abs(az) < ALLEY_WIDTH / 2);
-  avatar.position.set(ax, ay + (onArcade ? 0.15 : 0), az);
+  // Feet height already includes the arcade and interior floors.
+  avatar.position.set(ax, ay, az);
   avatar.rotation.y = ah;
   avatar.visible = mode === 'foot';
   if (avatarRig) {
-    avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt);
+    avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
+      state: player.state === 'air' ? 'air' : player.state,
+      stateTime: player.sim.stateTime,
+      vy: player.vy,
+    });
+    const head = avatarRig.limbs.head;
+    if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
   } else if (suitRig) {
     const onFoot = mode === 'foot';
     let strafe = 0;
@@ -680,7 +777,32 @@ function render(alpha: number, frameDt: number): void {
     camVz = -Math.sin(ah) * player.speed;
   }
   if (!(globalThis as unknown as { freezeCam?: boolean }).freezeCam) {
-    follow.update(active.x, active.z, active.heading, mode === 'driving' ? CAR_CAM : FOOT_CAM, frameDt, camVx, camVz, ay);
+    if (mode === 'foot' && nanning && !heroShot) {
+      const look = controls.consumeLook(frameDt);
+      follow.pointerLocked = document.pointerLockElement != null;
+      let nBlocks = nanning.heightGrid.query(ax, az, 14, camBlocks);
+      for (let i = 0; i < furniture.length; i++) {
+        const box = furniture[i];
+        if (!box.camBlock) continue;
+        camBlocks[nBlocks++] = box;
+      }
+      follow.updateOnFoot(
+        ax,
+        ay,
+        az,
+        ah,
+        insideShop ? INTERIOR_CAM : STREET_CAM,
+        frameDt,
+        look.x,
+        look.y,
+        camBlocks,
+        nBlocks,
+        shopAir,
+      );
+    } else {
+      controls.consumeLook(frameDt);
+      follow.update(active.x, active.z, active.heading, mode === 'driving' ? CAR_CAM : FOOT_CAM, frameDt, camVx, camVz, ay);
+    }
     // `?hero=1` frames the protagonist for a close-up. The chase cam runs first
     // so the rest of the frame is normal; this only overrides the final pose.
     if (heroShot && mode === 'foot') {
@@ -706,6 +828,10 @@ function render(alpha: number, frameDt: number): void {
   if (session) {
     session.tick(frameDt, timeOfDay, player.x, player.z, mode === 'foot', heat, follow.yaw, env.scene, daylightFactor(timeOfDay));
     session.render(env.camera);
+    const nearCar = mode === 'foot' && vehicles.nearest(player.x, player.z, ENTER_DISTANCE) >= 0;
+    session.hud.setMountHint(nearCar);
+    const sprinting = mode === 'foot' && controls.sprint(true) && player.speed > 0.4;
+    session.hud.setStamina(player.stamina, player.sim.staminaMax, sprinting || player.stamina < player.sim.staminaMax, frameDt);
   }
 
   const driving = mode === 'driving';
@@ -771,6 +897,12 @@ declare global {
       player: Player;
       peds: Pedestrians;
       city: typeof city;
+      teleport(x: number, z: number, heading?: number): void;
+      interiorProps(): { prop: string; shopId: string; x: number; z: number; w: number; d: number; h: number }[];
+      readonly interior: boolean;
+      readonly camDist: number;
+      readonly camBlocked: boolean;
+      readonly camEye: { x: number; y: number; z: number };
     };
   }
 }
@@ -824,6 +956,25 @@ window.__game = {
   player,
   peds,
   city,
+  teleport(x: number, z: number, heading?: number) {
+    player.teleport(x, z, heading);
+    follow.snapBehind(player.heading, player.x, player.z, player.y, insideShop ? INTERIOR_CAM : STREET_CAM);
+  },
+  interiorProps() {
+    return interiors?.props() ?? [];
+  },
+  get interior() {
+    return insideShop;
+  },
+  get camDist() {
+    return follow.eyeDistance;
+  },
+  get camBlocked() {
+    return follow.eyeBlocked;
+  },
+  get camEye() {
+    return { x: env.camera.position.x, y: env.camera.position.y, z: env.camera.position.z };
+  },
 };
 
 function completeMission(p: { title: string; reward: number; line: string }): void {
@@ -872,7 +1023,15 @@ function setPaused(p: boolean): void {
 // Esc (keyboard) toggles the pause menu both ways — a DOM listener, so it fires
 // even while the sim loop is frozen.
 addEventListener('keydown', (e) => {
+  // Pointer lock eats the first Escape (the browser unlocks). Don't also pause.
+  if (e.code === 'Escape' && document.pointerLockElement) return;
   if (e.code === 'Escape' && !document.getElementById('splash')) setPaused(!menu.isOpen());
+});
+
+// Click the view to orbit. Touch uses the right-half drag instead.
+env.renderer.domElement.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || touch || mode !== 'foot' || menu.isOpen()) return;
+  env.renderer.domElement.requestPointerLock?.();
 });
 
 // Gamepad Start toggles pause. Polled on its own rAF (not the sim loop, which is

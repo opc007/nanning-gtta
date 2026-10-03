@@ -11,7 +11,10 @@ export const STICK_DEADZONE = 0.12;
 export const TRIGGER_DEADZONE = 0.06;
 
 /** W3C "standard gamepad" button indices we use. */
-export const GP = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, L3: 10 } as const;
+export const GP = {
+  A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7,
+  BACK: 8, START: 9, L3: 10, R3: 11, DU: 12, DD: 13, DL: 14, DR: 15,
+} as const;
 
 /**
  * Radial deadzone: treat (x,y) as a vector, ignore magnitude below `dz`, and
@@ -29,8 +32,17 @@ export interface GamepadIntent {
   steer: number; // left stick X (right +) — steering in a car, strafing on foot
   forward: number; // left stick Y mapped forward+ — walking on foot
   throttle: number; // RT − LT, analog — throttle/brake in a car ONLY
-  handbrake: boolean;
-  sprint: boolean; // L3 (A-as-sprint is applied contextually on foot in Controls)
+  /** Right stick, deadzoned, -1..1. Y is raw (down is +). */
+  lookX: number;
+  lookY: number;
+  handbrake: boolean; // B, read while driving
+  sprint: boolean; // LT held or L3
+  jump: boolean; // A
+  crouch: boolean; // B, read on foot
+  attack: boolean; // X
+  grab: boolean; // Y
+  mount: boolean; // RB
+  interact: boolean; // D-pad up
 }
 
 const trigger = (v: number | undefined): number => {
@@ -46,15 +58,27 @@ const trigger = (v: number | undefined): number => {
  * in `Controls`, which knows the mode. Sticks use `axes` (up is −1, so
  * forward = −y); triggers are analog `button.value`. Pure.
  */
+const down = (buttonValues: readonly number[], i: number): boolean => (buttonValues[i] ?? 0) > 0.5;
+
 export function readGamepadIntent(axes: readonly number[], buttonValues: readonly number[]): GamepadIntent {
   const stick = radialDeadzone(axes[0] ?? 0, axes[1] ?? 0, STICK_DEADZONE);
+  const look = radialDeadzone(axes[2] ?? 0, axes[3] ?? 0, STICK_DEADZONE);
   const throttle = trigger(buttonValues[GP.RT]) - trigger(buttonValues[GP.LT]);
+  const lt = (buttonValues[GP.LT] ?? 0) > 0.5;
   return {
     steer: stick.x,
     forward: -stick.y || 0, // avoid -0 when the stick is centred
     throttle: clamp(throttle, -1, 1),
-    handbrake: (buttonValues[GP.B] ?? 0) > 0.5,
-    sprint: (buttonValues[GP.L3] ?? 0) > 0.5,
+    lookX: look.x,
+    lookY: look.y,
+    handbrake: down(buttonValues, GP.B),
+    sprint: lt || down(buttonValues, GP.L3),
+    jump: down(buttonValues, GP.A),
+    crouch: down(buttonValues, GP.B),
+    attack: down(buttonValues, GP.X),
+    grab: down(buttonValues, GP.Y),
+    mount: down(buttonValues, GP.RB),
+    interact: down(buttonValues, GP.DU),
   };
 }
 
@@ -69,6 +93,7 @@ export class GamepadInput {
   private intent: GamepadIntent | null = null;
   private down: boolean[] = [];
   private justPressed = new Set<number>();
+  private justReleased = new Set<number>();
 
   private poll(): void {
     if (this.polledThisFrame) return;
@@ -90,6 +115,7 @@ export class GamepadInput {
     for (let i = 0; i < gp.buttons.length; i++) {
       const pressed = gp.buttons[i].pressed;
       if (pressed && !this.down[i]) this.justPressed.add(i);
+      if (!pressed && this.down[i]) this.justReleased.add(i);
       this.down[i] = pressed;
     }
   }
@@ -107,10 +133,17 @@ export class GamepadInput {
     return this.intent?.handbrake ?? false;
   }
 
-  /** L3 always sprints; on foot, holding A sprints too (contextual). */
-  sprint(onFoot: boolean): boolean {
+  /** LT or L3. A is jump now, on foot and in a car. */
+  sprint(_onFoot = false): boolean {
     this.poll();
-    return (this.intent?.sprint ?? false) || (onFoot && this.isDown(GP.A));
+    return this.intent?.sprint ?? false;
+  }
+
+  /** Right stick, deadzoned, -1..1. */
+  look(): { x: number; y: number } {
+    this.poll();
+    if (!this.intent) return { x: 0, y: 0 };
+    return { x: this.intent.lookX, y: this.intent.lookY };
   }
 
   /** Held state of a button this frame. */
@@ -125,8 +158,14 @@ export class GamepadInput {
     return this.justPressed.has(button);
   }
 
+  wasReleased(button: number): boolean {
+    this.poll();
+    return this.justReleased.has(button);
+  }
+
   endFrame(): void {
     this.polledThisFrame = false;
     this.justPressed.clear();
+    this.justReleased.clear();
   }
 }
