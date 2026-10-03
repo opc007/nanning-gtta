@@ -442,7 +442,7 @@ function updateFoot(dt: number): void {
     {
       moveX: m.x,
       moveY: m.y,
-      camYaw: follow.yaw,
+      camYaw: follow.moveYaw,
       sprint: controls.sprint(true),
       walkMod: controls.walkMod(),
       crouchPressed: controls.crouchPressed(),

@@ -168,11 +168,20 @@ export class FollowCamera {
   }
   private grid: SpatialGrid | null = null;
 
-  /** Yaw the camera is currently looking along — used for camera-relative walking. */
+  /** Yaw the lens is actually looking along. The HUD arrow uses this. */
   get yaw(): number {
     const dx = this.look.x - this.camera.position.x;
     const dz = this.look.z - this.camera.position.z;
     return Math.atan2(-dz, dx);
+  }
+
+  /**
+   * Yaw on-foot movement uses. Wall avoidance may swing the lens; walking
+   * stays on the orbit the player chose, which sits behind the body unless
+   * they are looking around.
+   */
+  get moveYaw(): number {
+    return this.orbitYaw;
   }
 
   /**
