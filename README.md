@@ -3,8 +3,10 @@
 一个跑在浏览器里的 **GTA 式开放世界街区**，场景是广西南宁的邕州古城与机械厂文创园。
 买奶茶、吃老友粉、逛夜市、砸铺子、招警察——全部在 Three.js 里实时渲染，无后端。
 
-> **状态：v0.2 垂直切片** · 现代南宁商圈 + 老街口袋 + 机械厂文创园，六个任务串成一条链。
-> 美术是程序化 PBR（真实材质 + 法线 + Bloom），还不是实拍贴图。
+> **状态：v0.3** · 主角是穿黑三件套的程序化人体，汽车是放样车体，窗洞是真的凹进去的。
+> 跳跃、重力、空中转向都有。美术 100% 代码生成，**零二进制资源**。
+
+**在线试玩** → https://cst4j70zyx62f.space.mcode.cn
 
 ## 玩法
 
@@ -75,9 +77,31 @@
 ```bash
 npm install
 npm run dev        # 开发
-npm test           # 单元测试
+npm test           # 164 个单元测试
 npm run build      # 类型检查 + 产物
-OUT=s.png node scripts/nn-smoke.mjs   # 无头 Chromium 渲染自测 + 截图
+OUT=s.png node scripts/nn-smoke.mjs   # 无头渲染自测 + 截图
+```
+
+### 给要改这个项目的人（尤其是 AI agent）
+
+**先读 [`AGENTS.md`](./AGENTS.md)。** 里面是这个项目的架构地图、必须守住的规矩
+（渲染合批、UV 缩放、frameTime 下限、跳跃输入为什么是电平触发），
+以及 URL 调试参数 `?t=` `?hud=0` `?seed=`。
+
+一句话版本：**这个项目没有外部美术资源，所有模型都是代码生成的。改任何东西之前先跑一遍
+`npx tsc --noEmit && npx vitest run`，改完用 `scripts/_shot.mjs` 拍一张看看，别凭想象判断。**
+
+### 贡献
+
+直接开 PR 或 fork。项目是 MIT，随便改。
+如果你在改上游 gta7 动过的文件（`src/systems/`、`src/core/`、`src/world/`），
+commit message 里说明一下，方便以后合并上游更新。
+
+## 部署
+
+```bash
+npx vite build          # 产物在 dist/，纯静态
+# dist/ 直接扔到任何静态托管即可
 ```
 
 ## 路线图
