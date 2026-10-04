@@ -430,6 +430,7 @@ const camBlocks: Aabb3[] = [];
 function updateFoot(dt: number): void {
   if (interiors && nanning) {
     const streamed = interiors.update(nanning, player.x, player.z, touch);
+    interiors.tick(dt);
     furniture = streamed.colliders;
     insideShop = streamed.inside !== null;
     const shell = streamed.inside;

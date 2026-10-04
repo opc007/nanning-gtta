@@ -177,6 +177,8 @@ export interface StreetScenery {
   /** Night-market group. Hidden before 18:00. */
   stalls: THREE.Group;
   stallMeshes: Map<number, ShopVisual>;
+  /** Stall signboards: opaque, ramped by colour like the shop fascia signs. */
+  signMats: THREE.MeshBasicMaterial[];
 }
 
 const COL_H = 3.15;
@@ -238,8 +240,12 @@ function alleyClutter(city: NanningCity): THREE.BufferGeometry[] {
   return parts;
 }
 
-function stallVisuals(city: NanningCity, parent: THREE.Group): Map<number, ShopVisual> {
+function stallVisuals(
+  city: NanningCity,
+  parent: THREE.Group,
+): { meshes: Map<number, ShopVisual>; signMats: THREE.MeshBasicMaterial[] } {
   const map = new Map<number, ShopVisual>();
+  const signMats: THREE.MeshBasicMaterial[] = [];
   for (const unit of city.shops) {
     if (!unit.nightOnly) continue;
     const glass = new THREE.MeshStandardMaterial({
@@ -249,6 +255,10 @@ function stallVisuals(city: NanningCity, parent: THREE.Group): Map<number, ShopV
       roughness: 0.4,
     });
     const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(unit.def), toneMapped: false });
+    signMat.userData.dayK = 0.55;
+    signMat.userData.nightK = 0.85;
+    signMat.userData.shopDriven = true;
+    signMats.push(signMat);
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.4), signMat);
     // Face the middle of the street. Plane normal +Z, so ±π/2 turns it onto ±X.
     const face = unit.x < 0 ? Math.PI / 2 : -Math.PI / 2;
@@ -267,7 +277,7 @@ function stallVisuals(city: NanningCity, parent: THREE.Group): Map<number, ShopV
     parent.add(neon);
     map.set(unit.building, { sign, signMat, neon: neonMat, glass, litMats: [neonMat] });
   }
-  return map;
+  return { meshes: map, signMats };
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
@@ -320,11 +330,11 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): Street
     mesh.receiveShadow = true;
     stallRoot.add(mesh);
   }
-  const stallMeshes = stallVisuals(city, stallRoot);
+  const { meshes: stallMeshes, signMats: stallSignMats } = stallVisuals(city, stallRoot);
   scene.add(stallRoot);
 
   addLanterns(scene);
-  return { stalls: stallRoot, stallMeshes };
+  return { stalls: stallRoot, stallMeshes, signMats: stallSignMats };
 }
 
 function addLanterns(scene: THREE.Scene): void {

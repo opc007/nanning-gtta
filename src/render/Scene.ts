@@ -248,7 +248,7 @@ export class SceneEnv {
     try {
       const c = new EffectComposer(this.renderer);
       c.addPass(new RenderPass(this.scene, this.camera));
-      const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.75, 0.82);
+      const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.75, 1.5);
       c.addPass(bloom);
       // OutputPass applies tone mapping + sRGB conversion at the end of the
       // chain, which is what keeps ACES from being applied twice.

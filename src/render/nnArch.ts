@@ -130,6 +130,67 @@ export function makeManzhouWindowTexture(seed: number): THREE.CanvasTexture {
   return t;
 }
 
+/**
+ * Wooden A-board menu: the shop's real name plus its items with prices,
+ * cartoon-warm style (dark wood, gold trim). Goes on the pavement by the door.
+ */
+export function makeMenuBoardTexture(shop: ShopDef): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 384;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#5d3b21';
+  g.fillRect(0, 0, 256, 384);
+  // Plank seams.
+  g.strokeStyle = 'rgba(0,0,0,0.28)';
+  g.lineWidth = 3;
+  for (let y = 96; y < 384; y += 96) {
+    g.beginPath();
+    g.moveTo(0, y);
+    g.lineTo(256, y);
+    g.stroke();
+  }
+  // Gold trim.
+  g.strokeStyle = '#e8b84a';
+  g.lineWidth = 8;
+  g.strokeRect(10, 10, 236, 364);
+  // Shop name.
+  g.fillStyle = '#ffe9b8';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  let size = 38;
+  g.font = `bold ${size}px "PingFang SC","Microsoft YaHei",sans-serif`;
+  while (g.measureText(shop.name).width > 208 && size > 20) {
+    size -= 2;
+    g.font = `bold ${size}px "PingFang SC","Microsoft YaHei",sans-serif`;
+  }
+  g.fillText(shop.name, 128, 46);
+  g.strokeStyle = '#e8b84a';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(44, 76);
+  g.lineTo(212, 76);
+  g.stroke();
+  // Items with prices.
+  const items = shop.items.slice(0, 5);
+  items.forEach((it, i) => {
+    const y = 112 + i * 50;
+    g.fillStyle = '#fff3da';
+    g.font = 'bold 25px "PingFang SC","Microsoft YaHei",sans-serif';
+    g.textAlign = 'left';
+    let nm = it.name;
+    while (g.measureText(nm).width > 128 && nm.length > 2) nm = nm.slice(0, -1);
+    g.fillText(nm, 28, y);
+    g.fillStyle = '#ffd24a';
+    g.textAlign = 'right';
+    g.fillText(`¥${it.price}`, 228, y);
+  });
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
 /** Shop signboard: name on its brand colour, or a wrecked board after smashing. */
 export function makeSignTexture(shop: ShopDef, broken = false): THREE.CanvasTexture {
   const c = document.createElement('canvas');

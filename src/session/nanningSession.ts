@@ -59,6 +59,7 @@ export class NanningSession {
     const scenery = addNanningScenery(scene, city);
     for (const [key, visual] of scenery.stallMeshes) district.shopMeshes.set(key, visual);
     for (const visual of scenery.stallMeshes.values()) district.glowMats.push(...visual.litMats);
+    district.signMats.push(...scenery.signMats);
 
     this.shops = new Shops(city, district, scene);
     this.missions = new Missions(scene, city);
@@ -135,7 +136,27 @@ export class NanningSession {
   applyDaylight(daylight: number): void {
     const lit = 1 - 0.95 * daylight;
     for (const m of this.district.glowMats) {
-      if (m.transparent) m.opacity = 0.1 + 0.85 * lit;
+      // Preserve each material's authored opacity: the old code overwrote it
+      // with the ramp, so a doorway glow authored at 0.22 became a 0.95 solid
+      // quad at night — and a smashed neon came back to life every frame.
+      if (m.userData.baseOpacity === undefined) m.userData.baseOpacity = m.opacity;
+      if (m.transparent) m.opacity = (m.userData.baseOpacity as number) * (0.12 + 0.88 * lit);
+    }
+    // Opaque signboards and paper lanterns: ramp by colour multiplier. Full
+    // texture brightness at night is what blows the signs out to white under
+    // the night bloom; the ramp keeps the strokes just under the bloom
+    // threshold so the name stays readable. Shop-driven mats only stash the
+    // level — the shop system composes it with the smash-flash tint. Plain
+    // mats (lanterns) get the multiplier applied directly.
+    for (const m of this.district.signMats) {
+      const dayK = (m.userData.dayK as number | undefined) ?? 0.55;
+      const nightK = (m.userData.nightK as number | undefined) ?? 0.85;
+      const level = dayK + (nightK - dayK) * lit;
+      if (m.userData.shopDriven) {
+        m.userData.signLevel = level;
+      } else {
+        m.color.setHex((m.userData.baseColor as number) ?? 0xffffff).multiplyScalar(level);
+      }
     }
     for (const m of this.district.windowMats) {
       m.emissiveIntensity = 0.02 + 1.15 * lit;

@@ -177,6 +177,9 @@ export class Shops {
   private breakShop(s: ShopState): void {
     s.mesh.signMat.map = makeSignTexture(s.unit.def, true);
     s.mesh.signMat.needsUpdate = true;
+    // Kill the base opacity, not just this frame's: applyDaylight re-derives
+    // opacity from baseOpacity every frame.
+    s.mesh.neon.userData.baseOpacity = 0.05;
     s.mesh.neon.opacity = 0.05;
     s.mesh.glass.userData.broken = true;
     s.mesh.glass.emissiveIntensity = 0.02;
@@ -212,9 +215,13 @@ export class Shops {
       if (s.flash > 0) {
         s.flash = Math.max(0, s.flash - dt);
         const k = s.flash / 0.35;
-        if (s.mesh.signMat) s.mesh.signMat.color.setRGB(1, 1 - k * 0.6, 1 - k * 0.6);
+        // Compose the red hit-flash with the day/night sign level: the flash
+        // tints, the level dims, and neither stomps the other.
+        const level = (s.mesh.signMat.userData.signLevel as number | undefined) ?? 1;
+        if (s.mesh.signMat) s.mesh.signMat.color.setRGB(level, (1 - k * 0.6) * level, (1 - k * 0.6) * level);
       } else if (s.mesh.signMat) {
-        s.mesh.signMat.color.setRGB(1, 1, 1);
+        const level = (s.mesh.signMat.userData.signLevel as number | undefined) ?? 1;
+        s.mesh.signMat.color.setRGB(level, level, level);
       }
     }
 

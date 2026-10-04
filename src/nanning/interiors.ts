@@ -14,6 +14,8 @@ export type InteriorTemplate = 'laoyou' | 'fenjiao' | 'bbq' | 'milktea' | 'gener
 
 export interface ShopShell {
   id: string;
+  /** ShopDef id, e.g. 'zhongshan-fenjiao'. unit.id is a generated slot id. */
+  defId: string;
   kind: ShopKind;
   /** Centre of the street-facing door line. */
   x: number;
@@ -39,7 +41,12 @@ export type PropId =
   | 'steamer'
   | 'case'
   | 'grill'
-  | 'menu';
+  | 'menu'
+  | 'lantern'
+  | 'pot';
+
+/** PR #5 的三家店：粉饺 / 烧烤 / 奶茶。店内按老友粉密度加料只作用于这三家。 */
+export const WARM_SHOP_IDS = new Set(['zhongshan-fenjiao', 'rongji', 'hengzhou']);
 
 export interface InteriorProp {
   prop: PropId;
@@ -49,6 +56,10 @@ export interface InteriorProp {
   w: number;
   d: number;
   h: number;
+  /** World Y of the prop origin. Defaults to the 0.15 floor lip in the renderer. */
+  y?: number;
+  /** Hanging props (lanterns): no footprint, no collider. */
+  hang?: boolean;
 }
 
 export interface InteriorSeat {
@@ -96,6 +107,10 @@ interface LocalProp {
   h: number;
   /** Stools become seats. */
   seat?: boolean;
+  /** Hanging from the lid: skips the footprint/overlap checks and the collider. */
+  hang?: boolean;
+  /** World Y override for the prop origin. */
+  y?: number;
 }
 
 const PROP_SIZE: Record<PropId, { w: number; d: number; h: number }> = {
@@ -110,6 +125,10 @@ const PROP_SIZE: Record<PropId, { w: number; d: number; h: number }> = {
   grill: { w: 0.7, d: 1.1, h: 0.9 },
   // Short collider so it isn't a step or a camera block. The mesh is a wall board.
   menu: { w: 0.08, d: 1.05, h: 0.2 },
+  // Hanging red lantern: no footprint, no collider.
+  lantern: { w: 0.34, d: 0.34, h: 0 },
+  // Floor stew pot on a burner.
+  pot: { w: 0.52, d: 0.52, h: 0.55 },
 };
 
 function toWorld(shell: ShopShell, u: number, v: number): { x: number; z: number } {
@@ -128,7 +147,14 @@ function boundsOf(shell: ShopShell): InteriorLayout['bounds'] {
   };
 }
 
-function addProp(list: LocalProp[], prop: PropId, u: number, v: number, seat = false, size?: Partial<{ w: number; d: number; h: number }>): void {
+function addProp(
+  list: LocalProp[],
+  prop: PropId,
+  u: number,
+  v: number,
+  seat = false,
+  size?: Partial<{ w: number; d: number; h: number }> & { hang?: boolean; y?: number },
+): void {
   const base = PROP_SIZE[prop];
   list.push({
     prop,
@@ -138,6 +164,8 @@ function addProp(list: LocalProp[], prop: PropId, u: number, v: number, seat = f
     d: size?.d ?? base.d,
     h: size?.h ?? base.h,
     seat,
+    hang: size?.hang,
+    y: size?.y,
   });
 }
 
@@ -222,6 +250,33 @@ function layoutFor(template: InteriorTemplate, depth: number, width: number): Lo
   return list;
 }
 
+/** 老友粉级密度：三家暖色店专属。红灯笼 + 加灶 / 加桌，模板级布局不动。 */
+function addWarmExtras(list: LocalProp[], template: InteriorTemplate, depth: number, width: number): void {
+  const half = Math.max(1.2, width / 2 - 1.1);
+  const side = Math.min(2.15, half * 0.72);
+  const back = depth - 1.15;
+  const hang = { hang: true, y: 2.15 } as const;
+  // Red paper lanterns down the middle of the room, like 老友粉.
+  addProp(list, 'lantern', 1.9, 0, false, hang);
+  addProp(list, 'lantern', 3.4, 0, false, hang);
+  if (template === 'fenjiao') {
+    const counterW = Math.min(3.2, width - 1.6);
+    // Second steamer stack + a stew pot on a burner beside the first.
+    addProp(list, 'steamer', back, counterW * 0.45 + 0.95);
+    addProp(list, 'pot', back - 0.85, counterW * 0.45 + 0.45);
+    addProp(list, 'table-square', 4.35, -side * 0.6);
+    stoolsAround(list, 4.35, -side * 0.6, -1);
+  } else if (template === 'bbq') {
+    addProp(list, 'table-round', 5.6, -side * 0.3);
+    stoolsAround(list, 5.6, -side * 0.3, -1);
+    addProp(list, 'lantern', 4.9, 0, false, hang);
+  } else if (template === 'milktea') {
+    addProp(list, 'table-high', 3.4, side * 0.55);
+    addProp(list, 'stool-high', 3.4, side * 0.55 - 0.55, true);
+    addProp(list, 'stool-high', 3.4 + 0.5, side * 0.55, true);
+  }
+}
+
 function colliderFor(prop: InteriorProp): Aabb3 {
   return {
     minX: prop.x - prop.w / 2,
@@ -240,40 +295,54 @@ export function buildInterior(shell: ShopShell): InteriorLayout {
   const template = templateForKind(shell.kind);
   const depth = shell.depth;
   const local = layoutFor(template, depth, shell.width);
+  if (WARM_SHOP_IDS.has(shell.defId)) addWarmExtras(local, template, depth, shell.width);
   const props: InteriorProp[] = [];
   const seats: InteriorSeat[] = [];
   const bounds = boundsOf(shell);
   const inset = 0.42;
   for (const item of local) {
     const at = toWorld(shell, item.u, item.v);
-    // Keep furniture off the party walls and the back wall. Drop a piece
-    // that would stick out rather than shove it into another piece.
-    const box = {
-      minX: at.x - item.w / 2,
-      maxX: at.x + item.w / 2,
-      minZ: at.z - item.d / 2,
-      maxZ: at.z + item.d / 2,
+    const prop: InteriorProp = {
+      prop: item.prop,
+      x: at.x,
+      z: at.z,
+      rot: 0,
+      w: item.w,
+      d: item.d,
+      h: item.h,
+      y: item.y ?? 0.15,
+      hang: item.hang,
     };
-    if (
-      box.minX < bounds.minX + inset ||
-      box.maxX > bounds.maxX - inset ||
-      box.minZ < bounds.minZ + inset ||
-      box.maxZ > bounds.maxZ - inset
-    ) {
-      continue;
+    if (!item.hang) {
+      // Keep furniture off the party walls and the back wall. Drop a piece
+      // that would stick out rather than shove it into another piece.
+      const box = {
+        minX: at.x - item.w / 2,
+        maxX: at.x + item.w / 2,
+        minZ: at.z - item.d / 2,
+        maxZ: at.z + item.d / 2,
+      };
+      if (
+        box.minX < bounds.minX + inset ||
+        box.maxX > bounds.maxX - inset ||
+        box.minZ < bounds.minZ + inset ||
+        box.maxZ > bounds.maxZ - inset
+      ) {
+        continue;
+      }
+      const overlaps = props.some((other) => {
+        if (other.hang) return false;
+        const ow = other.w / 2;
+        const od = other.d / 2;
+        return !(
+          box.maxX < other.x - ow + 0.02 ||
+          box.minX > other.x + ow - 0.02 ||
+          box.maxZ < other.z - od + 0.02 ||
+          box.minZ > other.z + od - 0.02
+        );
+      });
+      if (overlaps) continue;
     }
-    const overlaps = props.some((other) => {
-      const ow = other.w / 2;
-      const od = other.d / 2;
-      return !(
-        box.maxX < other.x - ow + 0.02 ||
-        box.minX > other.x + ow - 0.02 ||
-        box.maxZ < other.z - od + 0.02 ||
-        box.minZ > other.z + od - 0.02
-      );
-    });
-    if (overlaps) continue;
-    const prop: InteriorProp = { prop: item.prop, x: at.x, z: at.z, rot: 0, w: item.w, d: item.d, h: item.h };
     props.push(prop);
     if (item.seat) {
       seats.push({ id: `${shell.id}-seat-${seats.length}`, x: at.x, z: at.z, y: item.h });
@@ -284,7 +353,7 @@ export function buildInterior(shell: ShopShell): InteriorLayout {
     shopId: shell.id,
     template,
     props,
-    colliders: props.map(colliderFor),
+    colliders: props.filter((p) => !p.hang).map(colliderFor),
     seats,
     bounds,
     door,
