@@ -4,6 +4,7 @@ import { generateNanningCity, type NanningCity } from './nanning/layout';
 import { SHOPS, STALLS } from './nanning/data';
 import { displayShopName, shopNameModeFrom } from './nanning/shopNames';
 import { NanningSession } from './session/nanningSession';
+import { createClipCharacter, type ClipCharacter } from './characters/clipRig';
 import { buildCharacter } from './characters/buildCharacter';
 import { PROTAGONIST } from './characters/protagonist';
 import { InteriorView } from './render/InteriorView';
@@ -149,10 +150,16 @@ if (streamedWorld) {
 }
 
 // Default is the lab-coat protagonist. `?skin=suit` keeps the v0.3 suit rig as an alternate.
-const suitSkin = urlParams.get('skin') === 'suit';
-const avatarRig = suitSkin ? null : buildCharacter(PROTAGONIST);
+// `?skin=suit` keeps the v0.3 box rig, `?skin=procedural` the old procedural
+// one; the default is the Kenney clip-driven character.
+const skinParam = urlParams.get('skin');
+const suitSkin = skinParam === 'suit';
+const proceduralSkin = skinParam === 'procedural';
+const clipRig: ClipCharacter | null =
+  suitSkin || proceduralSkin ? null : createClipCharacter(PROTAGONIST);
+const avatarRig = proceduralSkin ? buildCharacter(PROTAGONIST) : null;
 const suitRig: CharacterRig | null = suitSkin ? makeHumanoid(PLAYER_STYLE) : null;
-const avatar = suitSkin ? suitRig!.group : avatarRig!.group;
+const avatar = clipRig ? clipRig.group : (suitSkin ? suitRig!.group : avatarRig!.group);
 env.scene.add(avatar);
 // `?hero=1` is a portrait camera. A small fill keeps the coat and face readable
 // at night without changing the street's own lighting.
@@ -170,6 +177,8 @@ if (heroFill) env.scene.add(heroFill);
   get district() { return session?.district ?? null; },
   get shops() { return session?.shops ?? null; },
   get loop() { return loop; },
+  get avatar() { return clipRig ?? avatarRig ?? suitRig; },
+  get interiors() { return interiors; },
 };
 
 // Sfx is constructed here so the street session can blip on a purchase. The
@@ -731,13 +740,14 @@ function render(alpha: number, frameDt: number): void {
   avatar.position.set(ax, ay, az);
   avatar.rotation.y = ah;
   avatar.visible = mode === 'foot';
-  if (avatarRig) {
-    avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
+  if (clipRig || avatarRig) {
+    const liveRig = clipRig ?? avatarRig!;
+    liveRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
       state: player.state === 'air' ? 'air' : player.state,
       stateTime: player.sim.stateTime,
       vy: player.vy,
     });
-    const head = avatarRig.limbs.head;
+    const head = liveRig.limbs.head;
     if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
   } else if (suitRig) {
     const onFoot = mode === 'foot';
