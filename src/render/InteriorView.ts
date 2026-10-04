@@ -111,9 +111,11 @@ function propGeometry(id: PropId): THREE.BufferGeometry {
 const PROP_MAT: Record<PropId, number> = {
   'table-square': WOOD,
   'table-round': WOOD,
-  'table-high': 0x4a4038,
+  // Cartoon-warm like the 老友粉店: the milk-tea bar table and stools used to
+  // be dark brown / near-black. Warm wood + red keeps the whole street one family.
+  'table-high': WOOD,
   stool: RED,
-  'stool-high': 0x22262c,
+  'stool-high': RED,
   counter: CREAM,
   steamer: STEEL,
   case: 0xd5dde6,

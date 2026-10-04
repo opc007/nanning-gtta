@@ -19,7 +19,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { pbr, scaleBoxUv, type MaterialKey } from './materials';
 import type { NanningBuilding, ShopUnit } from '../nanning/layout';
-import { makeSignTexture, makeManzhouWindowTexture } from './nnArch';
+import type { ShopDef } from '../nanning/data';
+import { makeSignTexture, makeManzhouWindowTexture, makeMenuBoardTexture } from './nnArch';
 import { acUnitGeometry, waterTankGeometry, antennaGeometry, laundryGeometry, downpipeGeometry, securityGrilleGeometry, rngFrom, type ClutterTarget } from './props';
 
 const merge = (parts: THREE.BufferGeometry[]): THREE.BufferGeometry =>
@@ -65,9 +66,104 @@ export interface ModernDistrict {
   shopMeshes: Map<number, ShopVisual>;
   /** Everything that should glow after dark. */
   glowMats: THREE.MeshBasicMaterial[];
+  /**
+   * Opaque emissive-look materials (signboards, paper lanterns). Unlike
+   * glowMats they ramp by colour multiplier, not opacity — see
+   * `applyDaylight`. Each carries its own curve in `userData.dayK` /
+   * `userData.nightK`. Shop-driven mats (`userData.shopDriven`) only stash
+   * the resolved level in `userData.signLevel` for the shop system to compose
+   * with the smash flash; plain mats carry `userData.baseColor` and get the
+   * multiplier applied directly.
+   */
+  signMats: THREE.MeshBasicMaterial[];
   clutterTargets: ClutterTarget[];
   /** Shared window/glass materials, so the daylight ramp touches 3 not 1400. */
   windowMats: THREE.MeshStandardMaterial[];
+}
+
+/**
+ * Shops dressed cartoon-warm (paper lanterns + a menu A-board by the door),
+ * matching the 老友粉店 treatment. Everyone else keeps the plain fascia.
+ */
+const WARM_DRESS_IDS = new Set(['zhongshan-fenjiao', 'rongji', 'hengzhou']);
+
+const LANTERN_RED = 0xd9382c;
+const LANTERN_GOLD = 0xe8b84a;
+
+/**
+ * Cartoon paper lantern, ~0.34 m round, authored around the origin with the
+ * cord hanging up. Parts are split by material so a whole street of lanterns
+ * merges into three meshes.
+ */
+function lanternParts(): { red: THREE.BufferGeometry[]; gold: THREE.BufferGeometry[]; dark: THREE.BufferGeometry[] } {
+  const red: THREE.BufferGeometry[] = [];
+  const gold: THREE.BufferGeometry[] = [];
+  const dark: THREE.BufferGeometry[] = [];
+  // Paper body: squashed sphere.
+  const body = new THREE.SphereGeometry(0.17, 10, 8);
+  body.scale(1, 0.82, 1);
+  red.push(body);
+  // Ribs: half-tori in vertical planes, squashed to match the body.
+  for (let i = 0; i < 6; i++) {
+    const rib = new THREE.TorusGeometry(0.165, 0.009, 4, 10, Math.PI);
+    rib.rotateZ(Math.PI / 2); // arc now spans top→bottom
+    rib.rotateY((i * Math.PI) / 6);
+    rib.scale(1, 0.82, 1);
+    red.push(rib);
+  }
+  // Top / bottom caps.
+  const capT = new THREE.CylinderGeometry(0.06, 0.085, 0.05, 8);
+  capT.translate(0, 0.15, 0);
+  gold.push(capT);
+  const capB = new THREE.CylinderGeometry(0.085, 0.06, 0.05, 8);
+  capB.translate(0, -0.15, 0);
+  gold.push(capB);
+  // Tassel.
+  const tas = new THREE.ConeGeometry(0.035, 0.12, 6);
+  tas.rotateX(Math.PI);
+  tas.translate(0, -0.23, 0);
+  gold.push(tas);
+  // Hanging cord.
+  const cord = new THREE.CylinderGeometry(0.012, 0.012, 0.34, 5);
+  cord.translate(0, 0.34, 0);
+  dark.push(cord);
+  return { red, gold, dark };
+}
+
+/** Wooden A-board menu: legs + the real menu, facing the street. */
+function menuBoard(def: ShopDef, yaw: number, x: number, z: number): THREE.Group {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x6b4426, roughness: 0.85 });
+  const frame: THREE.BufferGeometry[] = [];
+  const legL = new THREE.BoxGeometry(0.06, 1.2, 0.06);
+  legL.rotateX(-0.18);
+  legL.translate(-0.33, 0.58, 0.02);
+  frame.push(legL);
+  const legR = new THREE.BoxGeometry(0.06, 1.2, 0.06);
+  legR.rotateX(-0.18);
+  legR.translate(0.33, 0.58, 0.02);
+  frame.push(legR);
+  const back = new THREE.BoxGeometry(0.06, 1.1, 0.06);
+  back.rotateX(0.42);
+  back.translate(0, 0.52, -0.2);
+  frame.push(back);
+  const bar = new THREE.BoxGeometry(0.72, 0.06, 0.05);
+  bar.rotateX(-0.18);
+  bar.translate(0, 0.32, 0.06);
+  frame.push(bar);
+  const frameMesh = new THREE.Mesh(merge(frame), wood);
+  frameMesh.castShadow = true;
+  g.add(frameMesh);
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.72, 1.04),
+    new THREE.MeshStandardMaterial({ map: makeMenuBoardTexture(def), roughness: 0.85 }),
+  );
+  face.position.set(0, 0.68, 0.115);
+  face.rotation.x = -0.18;
+  g.add(face);
+  g.position.set(x, 0, z);
+  g.rotation.y = yaw;
+  return g;
 }
 
 export function buildModernDistrict(
@@ -93,8 +189,26 @@ export function buildModernDistrict(
   const group = new THREE.Group();
   const shopMeshes = new Map<number, ShopVisual>();
   const glowMats: THREE.MeshBasicMaterial[] = [];
+  const signMats: THREE.MeshBasicMaterial[] = [];
   const clutterTargets: ClutterTarget[] = [];
   const districtMats: THREE.MeshStandardMaterial[] = [];
+
+  // Cartoon-warm dressing: shared paper-lantern materials, ramped by the
+  // day/night cycle (warm points that carry the night street). Geometry
+  // accumulates per shop and merges once, below.
+  const lanternRedMat = new THREE.MeshBasicMaterial({ color: LANTERN_RED });
+  lanternRedMat.userData.dayK = 0.5;
+  lanternRedMat.userData.nightK = 1.0;
+  lanternRedMat.userData.baseColor = LANTERN_RED;
+  const lanternGoldMat = new THREE.MeshBasicMaterial({ color: LANTERN_GOLD });
+  lanternGoldMat.userData.dayK = 0.5;
+  lanternGoldMat.userData.nightK = 0.95;
+  lanternGoldMat.userData.baseColor = LANTERN_GOLD;
+  const lanternDarkMat = new THREE.MeshBasicMaterial({ color: 0x2a2018 });
+  signMats.push(lanternRedMat, lanternGoldMat);
+  const dressRed: THREE.BufferGeometry[] = [];
+  const dressGold: THREE.BufferGeometry[] = [];
+  const dressDark: THREE.BufferGeometry[] = [];
 
   // ── Transparent geometry, batched ──────────────────────────────────────
   // One Mesh per building for its glazing and its window bands cost ~1900 draw
@@ -319,12 +433,17 @@ export function buildModernDistrict(
 
       // Fascia sign board above the shopfront.
       const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(shop.def), toneMapped: false });
+      // Opaque signboards ramp by colour multiplier (see applyDaylight), not
+      // opacity: full blast at night is what blows them out to white.
+      signMat.userData.dayK = 0.55;
+      signMat.userData.nightK = 0.85;
+      signMat.userData.shopDriven = true;
       const sw = Math.min(across - 0.6, 6.5);
       const signMesh = new THREE.Mesh(new THREE.PlaneGeometry(sw, sw * 0.25), signMat);
       signMesh.position.set(fx + faceNX * 0.3, gH + 0.95, fz + faceNZ * 0.3);
       signMesh.rotation.y = isEW ? (sign > 0 ? Math.PI / 2 : -Math.PI / 2) : sign > 0 ? 0 : Math.PI;
       group.add(signMesh);
-      glowMats.push(signMat);
+      signMats.push(signMat);
 
       // Neon underline.
       const neonMat = new THREE.MeshBasicMaterial({ color: shop.def.signColor, toneMapped: false, transparent: true, opacity: 0.9 });
@@ -345,11 +464,51 @@ export function buildModernDistrict(
       glowMats.push(dg.material as THREE.MeshBasicMaterial);
 
       shopMeshes.set(i, { sign: signMesh, signMat, neon: neonMat, glass: shopGlassMat, litMats: [neonMat] });
+
+      // Cartoon-warm dressing, like the 老友粉店: a pair of paper lanterns
+      // flanking the door plus a menu A-board on the pavement.
+      if (WARM_DRESS_IDS.has(shop.def.id)) {
+        for (const s of [-1, 1]) {
+          const lx = fx + faceNX * 0.55 + (isEW ? 0 : s * 1.7);
+          const lz = fz + faceNZ * 0.55 + (isEW ? s * 1.7 : 0);
+          // Short arm off the facade the lantern hangs from.
+          const arm = new THREE.BoxGeometry(0.55, 0.05, 0.05);
+          if (!isEW) arm.rotateY(Math.PI / 2);
+          arm.translate((fx + lx) / 2, 3.04, (fz + lz) / 2);
+          dressDark.push(arm);
+          const lp = lanternParts();
+          for (const part of lp.red) {
+            part.translate(lx, 2.7, lz);
+            dressRed.push(part);
+          }
+          for (const part of lp.gold) {
+            part.translate(lx, 2.7, lz);
+            dressGold.push(part);
+          }
+          for (const part of lp.dark) {
+            part.translate(lx, 2.7, lz);
+            dressDark.push(part);
+          }
+        }
+        const yaw = Math.atan2(faceNX, faceNZ);
+        const bx = fx + faceNX * 1.5 + (isEW ? 0 : across * 0.3);
+        const bz = fz + faceNZ * 1.5 + (isEW ? across * 0.3 : 0);
+        group.add(menuBoard(shop.def, yaw, bx, bz));
+      }
     } else {
       // No shop: a plain 满洲窗-style panel band so the upper facade still reads.
       quad(mzGeo, Math.min(across - 2, 4.2), 1.3, fx + faceNX * 0.05, gH + 2.2, fz + faceNZ * 0.05, glassYaw);
     }
   }
+
+  // ── Flush the paper-lantern dressing into three meshes ────────────────
+  const flushDress = (parts: THREE.BufferGeometry[], mat: THREE.Material): void => {
+    if (!parts.length) return;
+    group.add(new THREE.Mesh(merge(parts), mat));
+  };
+  flushDress(dressRed, lanternRedMat);
+  flushDress(dressGold, lanternGoldMat);
+  flushDress(dressDark, lanternDarkMat);
 
   // ── Flush every material bucket into one mesh ───────────────────────────
   for (const bk of buckets.values()) {
@@ -369,7 +528,7 @@ export function buildModernDistrict(
   districtMats.push(shopGlassMat, bandMat, mzMat);
 
   void bucket;
-  return { group, shopMeshes, glowMats, clutterTargets, windowMats: districtMats };
+  return { group, shopMeshes, glowMats, signMats, clutterTargets, windowMats: districtMats };
 }
 
 // ── Rooftop + facade clutter, one pass over the whole district ──────────────
