@@ -145,8 +145,10 @@ export class CityAssets {
       sm.roughness = 0.75 - 0.5 * d;
       sm.metalness = 0.05 + 0.5 * d;
     }
-    this.headMat.emissiveIntensity = 3 * lit;
-    (this.poolMat as THREE.MeshBasicMaterial).opacity = 0.9 * lit;
+    // Pressed down per the PR #5 review: lamp heads and their ground pools
+    // were washing the shop doorheads white together with the signs.
+    this.headMat.emissiveIntensity = 2.2 * lit;
+    (this.poolMat as THREE.MeshBasicMaterial).opacity = 0.6 * lit;
   }
 
   private sideMaterial(facade: THREE.CanvasTexture, tint: number): THREE.Material {

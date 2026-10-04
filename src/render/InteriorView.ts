@@ -13,11 +13,14 @@ import {
   interiorRadii,
   planInteriorStream,
   pointInsideShop,
+  WARM_SHOP_IDS,
   type InteriorLayout,
   type InteriorProp,
   type PropId,
   type ShopShell,
 } from '../nanning/interiors';
+import type { ShopDef } from '../nanning/data';
+import { makeMenuBoardTexture } from './nnArch';
 import type { Aabb3 } from '../systems/Collision';
 
 const MAX_INST = 320;
@@ -40,6 +43,19 @@ function merged(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
 function box(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d);
   g.translate(x, y, z);
+  return g;
+}
+
+function paintGeo(g: THREE.BufferGeometry, color: number): THREE.BufferGeometry {
+  const c = new THREE.Color(color);
+  const n = g.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    arr[i * 3] = c.r;
+    arr[i * 3 + 1] = c.g;
+    arr[i * 3 + 2] = c.b;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
   return g;
 }
 
@@ -103,6 +119,37 @@ function propGeometry(id: PropId): THREE.BufferGeometry {
         box(0.07, 0.06, 1.08, 0, 1.88, 0),
         box(0.02, 0.5, 0.9, 0, 1.55, 0.03),
       ]);
+    case 'lantern': {
+      // Red paper lantern hanging from the lid; origin at the hang point.
+      const body = new THREE.SphereGeometry(0.17, 12, 10);
+      body.scale(1, 0.8, 1);
+      const capT = new THREE.CylinderGeometry(0.06, 0.06, 0.05, 8);
+      const capB = new THREE.CylinderGeometry(0.06, 0.06, 0.05, 8);
+      const tassel = new THREE.BoxGeometry(0.035, 0.14, 0.035);
+      return merged([
+        paintGeo(body, 0xc22a28).translate(0, -0.19, 0),
+        paintGeo(capT, 0xd9a441).translate(0, -0.045, 0),
+        paintGeo(capB, 0xd9a441).translate(0, -0.335, 0),
+        paintGeo(tassel, 0x8e1f1e).translate(0, -0.43, 0),
+      ]);
+    }
+    case 'pot': {
+      // Stew pot on a burner, lid on.
+      const burner = new THREE.BoxGeometry(0.4, 0.08, 0.4);
+      const body = new THREE.CylinderGeometry(0.24, 0.2, 0.3, 12);
+      const lid = new THREE.CylinderGeometry(0.25, 0.25, 0.05, 12);
+      const knob = new THREE.SphereGeometry(0.035, 8, 6);
+      const hL = new THREE.BoxGeometry(0.12, 0.04, 0.04);
+      const hR = new THREE.BoxGeometry(0.12, 0.04, 0.04);
+      return merged([
+        paintGeo(burner, 0x2e3238).translate(0, 0.04, 0),
+        paintGeo(body, 0x9aa0a8).translate(0, 0.23, 0),
+        paintGeo(lid, 0x3a3f45).translate(0, 0.405, 0),
+        paintGeo(knob, 0x3a3f45).translate(0, 0.45, 0),
+        paintGeo(hL, 0x6a7078).translate(-0.28, 0.3, 0),
+        paintGeo(hR, 0x6a7078).translate(0.28, 0.3, 0),
+      ]);
+    }
     default:
       return box(0.4, 0.4, 0.4, 0, 0.2, 0);
   }
@@ -121,16 +168,93 @@ const PROP_MAT: Record<PropId, number> = {
   case: 0xd5dde6,
   grill: DARK,
   menu: 0xf4efe4,
+  // Lantern / pot are vertex-coloured; the entries below are unused fallbacks.
+  lantern: 0xc22a28,
+  pot: STEEL,
 };
 
 const PROP_IDS: PropId[] = [
   'table-square', 'table-round', 'table-high', 'stool', 'stool-high',
-  'counter', 'steamer', 'case', 'grill', 'menu',
+  'counter', 'steamer', 'case', 'grill', 'menu', 'lantern', 'pot',
 ];
+
+// Props small enough to instance per detail rather than per furniture piece.
+const DECOR_IDS = ['charcoal', 'skewer', 'cup', 'bowl'] as const;
+type DecorId = (typeof DECOR_IDS)[number];
+const DECOR_CAP: Record<DecorId, number> = { charcoal: 32, skewer: 200, cup: 128, bowl: 128 };
+
+function decorGeometry(id: DecorId): THREE.BufferGeometry {
+  switch (id) {
+    case 'charcoal': {
+      const g = new THREE.PlaneGeometry(0.55, 0.95);
+      g.rotateX(-Math.PI / 2);
+      return g;
+    }
+    case 'skewer': {
+      const stick = new THREE.BoxGeometry(0.025, 0.025, 0.72);
+      const meat = new THREE.BoxGeometry(0.06, 0.05, 0.34);
+      meat.translate(0, 0.02, 0.08);
+      return merged([stick, meat]);
+    }
+    case 'cup': {
+      const body = new THREE.CylinderGeometry(0.045, 0.038, 0.13, 10);
+      body.translate(0, 0.065, 0);
+      const lid = new THREE.CylinderGeometry(0.048, 0.048, 0.02, 10);
+      lid.translate(0, 0.14, 0);
+      return merged([body, lid]);
+    }
+    case 'bowl': {
+      const g = new THREE.CylinderGeometry(0.075, 0.05, 0.07, 10);
+      g.translate(0, 0.035, 0);
+      return g;
+    }
+  }
+}
+
+function decorMaterial(id: DecorId): THREE.Material {
+  switch (id) {
+    case 'charcoal':
+      // Glowing coal bed on the grill. Small and warm, well under bloom blowout.
+      return new THREE.MeshStandardMaterial({ color: 0x20100a, emissive: 0xff5a1a, emissiveIntensity: 1.1, roughness: 1 });
+    case 'skewer':
+      return mat(0xd9b36a, 0.85);
+    case 'cup':
+      return mat(0xf4efe4, 0.6);
+    case 'bowl':
+      return mat(0xf8f5ec, 0.55);
+  }
+}
+
+// Rising steam wisps over steamers, grills and stew pots. One draw call.
+const STEAM_CAP = 360;
+const STEAM_VERT = `
+uniform float uTime;
+attribute float aSeed;
+varying float vAlpha;
+void main() {
+  float life = fract(uTime * 0.22 + aSeed);
+  vec3 p = position;
+  p.y += life * 1.15;
+  p.x += sin(uTime * 1.4 + aSeed * 40.0) * 0.07 * life;
+  p.z += cos(uTime * 1.1 + aSeed * 31.0) * 0.07 * life;
+  vAlpha = (1.0 - life) * smoothstep(0.0, 0.14, life) * 0.4;
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_PointSize = (10.0 + life * 46.0) * (140.0 / -mv.z);
+  gl_Position = projectionMatrix * mv;
+}`;
+const STEAM_FRAG = `
+varying float vAlpha;
+void main() {
+  float d = length(gl_PointCoord - 0.5);
+  float a = smoothstep(0.5, 0.06, d) * vAlpha;
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(0.96, 0.93, 0.88, a);
+}`;
 
 function shellOf(unit: ShopUnit, building: NanningBuilding): ShopShell {
   return {
     id: unit.id,
+    defId: unit.def.id,
     kind: unit.def.kind,
     x: unit.x,
     z: unit.z,
@@ -150,14 +274,26 @@ export class InteriorView {
   private readonly pending: string[] = [];
   private shellMesh: THREE.Mesh | null = null;
   private readonly instances = new Map<PropId, THREE.InstancedMesh>();
+  private readonly decorMeshes = new Map<DecorId, THREE.InstancedMesh>();
   private readonly dummy = new THREE.Object3D();
   private shellDirty = false;
+  private defs = new Map<string, ShopDef>();
+  private readonly menuGeo = new THREE.PlaneGeometry(1.15, 1.72);
+  private readonly menuMeshes = new Map<string, THREE.Mesh>();
+  private readonly steamGeo = new THREE.BufferGeometry();
+  private readonly steamMat: THREE.ShaderMaterial;
+  private readonly steam: THREE.Points;
 
   constructor(scene: THREE.Scene) {
     this.group.name = 'interiors';
     scene.add(this.group);
     for (const id of PROP_IDS) {
-      const mesh = new THREE.InstancedMesh(propGeometry(id), mat(PROP_MAT[id], id === 'case' ? 0.25 : 0.78), MAX_INST);
+      // Lanterns and pots carry their own vertex colours.
+      const material =
+        id === 'lantern' || id === 'pot'
+          ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.05 })
+          : mat(PROP_MAT[id], id === 'case' ? 0.25 : 0.78);
+      const mesh = new THREE.InstancedMesh(propGeometry(id), material, MAX_INST);
       mesh.count = 0;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -170,6 +306,43 @@ export class InteriorView {
       this.instances.set(id, mesh);
       this.group.add(mesh);
     }
+    // Tabletop / grill details for the three warm shops.
+    for (const id of DECOR_IDS) {
+      const mesh = new THREE.InstancedMesh(decorGeometry(id), decorMaterial(id), DECOR_CAP[id]);
+      mesh.count = 0;
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      this.decorMeshes.set(id, mesh);
+      this.group.add(mesh);
+    }
+    // Steam points, one draw call for every emitter.
+    this.steamGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(STEAM_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage),
+    );
+    this.steamGeo.setAttribute(
+      'aSeed',
+      new THREE.BufferAttribute(new Float32Array(STEAM_CAP), 1).setUsage(THREE.DynamicDrawUsage),
+    );
+    this.steamGeo.setDrawRange(0, 0);
+    this.steamMat = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: STEAM_VERT,
+      fragmentShader: STEAM_FRAG,
+      transparent: true,
+      depthWrite: false,
+    });
+    this.steam = new THREE.Points(this.steamGeo, this.steamMat);
+    this.steam.frustumCulled = false;
+    this.steam.visible = false;
+    this.steam.renderOrder = 5;
+    this.group.add(this.steam);
+  }
+
+  /** Advance the steam shader clock. Called every frame from the main loop. */
+  tick(dt: number): void {
+    this.steamMat.uniforms.uTime.value += dt;
   }
 
   /**
@@ -177,6 +350,7 @@ export class InteriorView {
    * that is currently built, and which shop the player is standing in.
    */
   update(city: NanningCity, px: number, pz: number, touch: boolean): { colliders: Aabb3[]; inside: ShopShell | null } {
+    this.defs = new Map(city.shops.map((s) => [s.id, s.def]));
     const fronts = city.shops.filter((s) => !s.nightOnly && city.buildings[s.building]);
     const plan = planInteriorStream(
       [...this.layouts.keys(), ...this.pending],
@@ -249,7 +423,7 @@ export class InteriorView {
         const base = id === 'counter' ? 2.4 : id === 'case' ? 1.2 : id === 'grill' ? 1.1 : p.d;
         const sz = base > 0 ? p.d / base : 1;
         const sx = id === 'counter' || id === 'grill' ? p.w / (id === 'grill' ? 0.7 : 0.7) : 1;
-        this.dummy.position.set(p.x, 0.15, p.z);
+        this.dummy.position.set(p.x, p.y ?? 0.15, p.z);
         this.dummy.rotation.set(0, p.rot, 0);
         this.dummy.scale.set(sx, 1, sz);
         this.dummy.updateMatrix();
@@ -258,6 +432,92 @@ export class InteriorView {
       mesh.count = n;
       mesh.instanceMatrix.needsUpdate = true;
     }
+    this.writeDecor();
+    this.rebuildSteam();
+  }
+
+  /**
+   * Small storytelling details, only for the three warm shops: glowing coals
+   * and skewers on the grill, cups on the counter, bowls on the tables.
+   */
+  private writeDecor(): void {
+    const buckets = new Map<DecorId, { x: number; y: number; z: number; rot: number; sx: number; sz: number }[]>();
+    for (const id of DECOR_IDS) buckets.set(id, []);
+    for (const layout of this.layouts.values()) {
+      if (!WARM_SHOP_IDS.has(layout.shopId)) continue;
+      for (const p of layout.props) {
+        const cos = Math.cos(p.rot);
+        const sin = Math.sin(p.rot);
+        const at = (lx: number, lz: number): { x: number; z: number } => ({
+          x: p.x + lx * cos + lz * sin,
+          z: p.z - lx * sin + lz * cos,
+        });
+        if (p.prop === 'grill') {
+          const sx = p.w / 0.7;
+          const sz = p.d / 1.1;
+          const c = at(0, 0);
+          buckets.get('charcoal')!.push({ x: c.x, y: 0.965, z: c.z, rot: p.rot, sx, sz });
+          for (let i = 0; i < 5; i++) {
+            const s = at(0, (i - 2) * 0.17 * sz);
+            buckets.get('skewer')!.push({ x: s.x, y: 1.0, z: s.z, rot: p.rot + (i % 2 === 0 ? 0.09 : -0.09), sx: 1, sz: 1 });
+          }
+        } else if (p.prop === 'counter') {
+          const sz = p.d / 2.4;
+          for (let i = 0; i < 4; i++) {
+            const s = at(i % 2 === 0 ? -0.12 : 0.12, (i - 1.5) * 0.5 * sz);
+            buckets.get('cup')!.push({ x: s.x, y: 1.095, z: s.z, rot: 0, sx: 1, sz: 1 });
+          }
+        } else if (p.prop === 'table-square') {
+          for (const lx of [-0.18, 0.18]) {
+            const s = at(lx, 0);
+            buckets.get('bowl')!.push({ x: s.x, y: 0.895, z: s.z, rot: 0, sx: 1, sz: 1 });
+          }
+        }
+      }
+    }
+    for (const id of DECOR_IDS) {
+      const mesh = this.decorMeshes.get(id)!;
+      const list = buckets.get(id)!;
+      const n = Math.min(list.length, DECOR_CAP[id]);
+      for (let i = 0; i < n; i++) {
+        const d = list[i];
+        this.dummy.position.set(d.x, d.y, d.z);
+        this.dummy.rotation.set(0, d.rot, 0);
+        this.dummy.scale.set(d.sx, 1, d.sz);
+        this.dummy.updateMatrix();
+        mesh.setMatrixAt(i, this.dummy.matrix);
+      }
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /** Steam emitters over every steamer, grill and stew pot of the warm shops. */
+  private rebuildSteam(): void {
+    const PER = 36;
+    const emitters: { x: number; y: number; z: number }[] = [];
+    for (const layout of this.layouts.values()) {
+      if (!WARM_SHOP_IDS.has(layout.shopId)) continue;
+      for (const p of layout.props) {
+        const y = p.y ?? 0.15;
+        if (p.prop === 'steamer') emitters.push({ x: p.x, y: y + 0.78, z: p.z });
+        else if (p.prop === 'grill') emitters.push({ x: p.x, y: y + 0.86, z: p.z });
+        else if (p.prop === 'pot') emitters.push({ x: p.x, y: y + 0.44, z: p.z });
+      }
+    }
+    const pos = this.steamGeo.getAttribute('position') as THREE.BufferAttribute;
+    const seed = this.steamGeo.getAttribute('aSeed') as THREE.BufferAttribute;
+    let k = 0;
+    for (const e of emitters) {
+      for (let i = 0; i < PER && k < STEAM_CAP; i++, k++) {
+        pos.setXYZ(k, e.x + (Math.random() - 0.5) * 0.34, e.y, e.z + (Math.random() - 0.5) * 0.34);
+        seed.setX(k, Math.random());
+      }
+    }
+    this.steamGeo.setDrawRange(0, k);
+    pos.needsUpdate = true;
+    seed.needsUpdate = true;
+    this.steam.visible = k > 0;
   }
 
   private rebuildShells(): void {
@@ -294,5 +554,25 @@ export class InteriorView {
     this.shellMesh.receiveShadow = true;
     this.shellMesh.castShadow = false;
     this.group.add(this.shellMesh);
+
+    // Readable wall menus for the three warm shops — same art as the A-board,
+    // hung on a side wall so it never fights the back-wall blank board.
+    for (const m of this.menuMeshes.values()) m.visible = false;
+    for (const layout of this.layouts.values()) {
+      if (!WARM_SHOP_IDS.has(layout.shopId)) continue;
+      const def = this.defs.get(layout.shopId);
+      if (!def) continue;
+      let mesh = this.menuMeshes.get(layout.shopId);
+      if (!mesh) {
+        const material = new THREE.MeshStandardMaterial({ map: makeMenuBoardTexture(def), roughness: 0.85 });
+        mesh = new THREE.Mesh(this.menuGeo, material);
+        this.menuMeshes.set(layout.shopId, mesh);
+        this.group.add(mesh);
+      }
+      const b = layout.bounds;
+      mesh.position.set((b.minX + b.maxX) / 2, 1.62, b.minZ + 0.3);
+      mesh.rotation.set(0, 0, 0);
+      mesh.visible = true;
+    }
   }
 }

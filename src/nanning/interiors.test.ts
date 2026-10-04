@@ -19,6 +19,7 @@ function shells(): ShopShell[] {
       const b = city.buildings[s.building];
       return {
         id: s.id,
+        defId: s.def.id,
         kind: s.def.kind,
         x: s.x,
         z: s.z,

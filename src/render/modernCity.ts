@@ -435,8 +435,11 @@ export function buildModernDistrict(
       const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(shop.def), toneMapped: false });
       // Opaque signboards ramp by colour multiplier (see applyDaylight), not
       // opacity: full blast at night is what blows them out to white.
+      // The three warm-dressed shops sit well under the bloom threshold at
+      // night (PR #5 review: the doorhead name must stay readable).
+      const warmDressed = WARM_DRESS_IDS.has(shop.def.id);
       signMat.userData.dayK = 0.55;
-      signMat.userData.nightK = 0.85;
+      signMat.userData.nightK = warmDressed ? 0.5 : 0.85;
       signMat.userData.shopDriven = true;
       const sw = Math.min(across - 0.6, 6.5);
       const signMesh = new THREE.Mesh(new THREE.PlaneGeometry(sw, sw * 0.25), signMat);
@@ -445,8 +448,9 @@ export function buildModernDistrict(
       group.add(signMesh);
       signMats.push(signMat);
 
-      // Neon underline.
-      const neonMat = new THREE.MeshBasicMaterial({ color: shop.def.signColor, toneMapped: false, transparent: true, opacity: 0.9 });
+      // Neon underline. The strip sits right under the sign: keep the warm
+      // shops' strip dim so it reads as a line, not a wash (PR #5 review).
+      const neonMat = new THREE.MeshBasicMaterial({ color: shop.def.signColor, toneMapped: false, transparent: true, opacity: warmDressed ? 0.35 : 0.9 });
       const neon = new THREE.Mesh(new THREE.PlaneGeometry(across - 0.8, 0.13), neonMat);
       neon.position.set(fx + faceNX * 0.22, gH + 0.2, fz + faceNZ * 0.22);
       neon.rotation.y = signMesh.rotation.y;
