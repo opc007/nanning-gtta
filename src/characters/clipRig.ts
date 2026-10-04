@@ -178,15 +178,21 @@ export function createClipCharacter(
     (gltf) => {
       const model = gltf.scene;
       model.updateMatrixWorld(true);
-      // A fixed scale, not one derived from the bounding box. The pack's
-      // characters are authored at 0.77 m and the task brief calls for x2.2 to
-      // reach 1.7 m; deriving it from `Box3.setFromObject` came out several
-      // times too large, because the skinned mesh's bounds at load time do not
-      // describe the posed figure.
-      const k = 4.9;
+      // x2.2 puts the figure at 1.59 m, measured off the skinned meshes'
+      // world bounds, so 2.36 lands it on the 1.7 m the def asks for.
+      //
+      // Measure the meshes, not the bones. The topmost bone here is the neck —
+      // the head is a separate skinned mesh that reaches 0.23 m higher — so a
+      // bone-only measurement reads 0.76 m at x2.2 and says x4.9 gives 1.68 m.
+      // It does not: x4.9 puts the character at 3.5 m, which is what made it
+      // look enormous.
+      const k = 2.36;
       model.scale.setScalar(k);
+      // `setFromObject` runs *after* the scale is set, so `box.min.y` is
+      // already in world units. Scaling it a second time lifted the figure off
+      // the ground.
       const box = new THREE.Box3().setFromObject(model);
-      model.position.y = -box.min.y * k;
+      model.position.y = -box.min.y;
       model.traverse((o) => {
         o.castShadow = true;
         o.receiveShadow = true;
