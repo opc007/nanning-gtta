@@ -25,7 +25,7 @@ export const PROTAGONIST: CharacterDef = {
   top: {
     id: 'grey-rib-tank',
     style: 'tank',
-    color: 0x8d9094,
+    color: 0x6f7378,
   },
   outerwear: {
     id: 'white-labcoat',
@@ -38,7 +38,7 @@ export const PROTAGONIST: CharacterDef = {
   bottoms: {
     id: 'grey-cargo-shorts',
     style: 'cargo-shorts',
-    color: 0x6a6e70,
+    color: 0x878a8d,
   },
   shoes: {
     id: 'black-flipflops',

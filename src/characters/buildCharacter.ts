@@ -15,6 +15,8 @@ import { advancePhase, computePose, createPose, poseStateFrom, type JointName } 
 export interface CharacterAnim {
   state: string;
   stateTime: number;
+  /** Punch progress, 1 at the hit falling back to 0. See `pose.ts`. */
+  punch?: number;
   vy: number;
 }
 
@@ -23,6 +25,12 @@ export interface CharacterRig {
   /** Named joints. Keys are stable: hips, torso, head, upperArmL, lowerArmL, ... */
   readonly limbs: Record<string, THREE.Object3D>;
   update(speed: number, dt: number, anim?: CharacterAnim): void;
+  /**
+   * Hide the face for the first-person camera. The GLB rig needs it because
+   * skinning ignores the bone's own `visible` flag, so the head meshes have to
+   * be hidden directly rather than through the head joint.
+   */
+  setHeadVisible(visible: boolean): void;
 }
 
 const mat = (color: number, roughness = 0.78): THREE.MeshStandardMaterial =>
@@ -263,5 +271,13 @@ export function buildCharacter(def: CharacterDef): CharacterRig {
     }
   };
 
-  return { group, limbs, update };
+  return {
+    group,
+    limbs,
+    update,
+    setHeadVisible(visible: boolean) {
+      const head = limbs.head;
+      if (head) head.visible = visible;
+    },
+  };
 }

@@ -4,6 +4,7 @@ import { generateNanningCity, type NanningCity } from './nanning/layout';
 import { SHOPS, STALLS } from './nanning/data';
 import { displayShopName, shopNameModeFrom } from './nanning/shopNames';
 import { NanningSession } from './session/nanningSession';
+import { createGlbCharacterRig } from './characters/glbRig';
 import { buildCharacter } from './characters/buildCharacter';
 import { PROTAGONIST } from './characters/protagonist';
 import { InteriorView } from './render/InteriorView';
@@ -149,10 +150,13 @@ if (streamedWorld) {
 }
 
 // Default is the lab-coat protagonist. `?skin=suit` keeps the v0.3 suit rig as an alternate.
-const suitSkin = urlParams.get('skin') === 'suit';
-const avatarRig = suitSkin ? null : buildCharacter(PROTAGONIST);
+const skinParam = urlParams.get('skin');
+const suitSkin = skinParam === 'suit';
+const proceduralSkin = skinParam === 'procedural';
+const glbRig = suitSkin || proceduralSkin ? null : createGlbCharacterRig(PROTAGONIST);
+const avatarRig = proceduralSkin ? buildCharacter(PROTAGONIST) : null;
 const suitRig: CharacterRig | null = suitSkin ? makeHumanoid(PLAYER_STYLE) : null;
-const avatar = suitSkin ? suitRig!.group : avatarRig!.group;
+const avatar = glbRig ? glbRig.group : (suitSkin ? suitRig!.group : avatarRig!.group);
 env.scene.add(avatar);
 // `?hero=1` is a portrait camera. A small fill keeps the coat and face readable
 // at night without changing the street's own lighting.
@@ -170,6 +174,11 @@ if (heroFill) env.scene.add(heroFill);
   get district() { return session?.district ?? null; },
   get shops() { return session?.shops ?? null; },
   get loop() { return loop; },
+  // The character rig itself, not just its group: the screenshot harness
+  // drives `update` directly to hold a punch at its peak, which the game loop
+  // would otherwise have finished and reset ~200 ms after the key press.
+  get avatar() { return glbRig ?? avatarRig ?? suitRig; },
+  get interiors() { return interiors; },
 };
 
 // Sfx is constructed here so the street session can blip on a purchase. The
@@ -731,13 +740,18 @@ function render(alpha: number, frameDt: number): void {
   avatar.position.set(ax, ay, az);
   avatar.rotation.y = ah;
   avatar.visible = mode === 'foot';
-  if (avatarRig) {
-    avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
+  if (glbRig || avatarRig) {
+    const liveRig = glbRig ?? avatarRig!;
+    liveRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
       state: player.state === 'air' ? 'air' : player.state,
       stateTime: player.sim.stateTime,
       vy: player.vy,
+      // `__forcePunch` is a screenshot hook, same idea as `freezeCam`: it
+      // holds the punch at a chosen progress so a frame can be captured at the
+      // peak extension, which is otherwise over in ~200 ms.
+      punch: (globalThis as unknown as { __forcePunch?: number }).__forcePunch,
     });
-    const head = avatarRig.limbs.head;
+    const head = liveRig.limbs.head;
     if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
   } else if (suitRig) {
     const onFoot = mode === 'foot';

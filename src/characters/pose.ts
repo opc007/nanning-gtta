@@ -58,6 +58,13 @@ export interface PoseInput {
   vy: number;
   /** Extra forward lean, radians. */
   lean: number;
+  /**
+   * Punch progress, 1 at the moment of the hit falling back to 0 as the arm
+   * retracts. 0 = not punching. This is an overlay rather than an
+   * `AnimState` because you can punch while walking, and the punch has to win
+   * over the gait for the arm it uses.
+   */
+  punch?: number;
 }
 
 export const STRIDE_M: Partial<Record<AnimState, number>> = {
@@ -76,7 +83,7 @@ const JOINTS: JointName[] = [
 ];
 
 /** Limits applied after the pose is solved, radians / metres. */
-const LIMIT = 1.6;
+const LIMIT = 2.9;
 
 export function createPose(): Pose {
   const pose = {} as Pose;
@@ -175,13 +182,21 @@ export function computePose(inp: PoseInput, out: Pose): void {
     out.upperArmL.rz = 0.3;
     out.upperArmR.rz = 0.3;
   } else if (state === 'jump') {
-    out.upperLegL.rz = -0.35;
-    out.upperLegR.rz = -0.35;
-    out.lowerLegL.rz = -0.7;
-    out.lowerLegR.rz = -0.7;
-    out.upperArmL.rz = -2.2;
-    out.upperArmR.rz = -2.2;
-    out.torso.rz = -0.1;
+    // Knees up and heels tucked, so it reads as a jump rather than a hover.
+    out.upperLegL.rz = -0.52;
+    out.upperLegR.rz = -0.52;
+    out.lowerLegL.rz = -0.92;
+    out.lowerLegR.rz = -0.92;
+    // Asymmetric on purpose. Both arms swinging back by the same amount puts
+    // one directly behind the other, and from a side-on camera the far arm
+    // disappears into the torso — the shot read as a one-armed model. One arm
+    // up and back, one forward and up, keeps both in frame.
+    out.upperArmL.rz = -1.52;
+    out.upperArmR.rz = 0.62;
+    out.lowerArmL.rz = -0.72;
+    out.lowerArmR.rz = -0.46;
+    out.torso.rz = 0.12;
+    out.head.rz = 0.06;
   } else if (state === 'fall') {
     out.upperLegL.rz = 0.25;
     out.upperLegR.rz = 0.15;
@@ -224,6 +239,27 @@ export function computePose(inp: PoseInput, out: Pose): void {
   }
 
   out.torso.rz += inp.lean;
+
+  // Punch overlays the gait: a fast extension over the first third, then a
+  // slower retract, with the torso twisting into it and the off arm pulling
+  // back for balance.
+  const punch = inp.punch ?? 0;
+  if (punch > 0) {
+    // `punch` is the *remaining* fraction of the swing, so it counts down from
+    // 1. Elapsed time is what drives the arm out and back.
+    const k = 1 - clamp(punch, 0, 1);
+    const ext = k < 0.3 ? k / 0.3 : 1 - (k - 0.3) / 0.7;
+    out.upperArmR.rz = 2.14 * ext;
+    out.lowerArmR.rz = -0.3 * (1 - ext) - 0.04;
+    // Guard, not counter-swing. Swinging the off arm back by a matching amount
+    // puts both arms out to the sides, and the silhouette reads as a wide "A"
+    // rather than a punch. A real punch keeps the off hand up by the chin, so
+    // the upper arm stays down and the elbow does the work.
+    out.upperArmL.rz = -0.22 * ext;
+    out.lowerArmL.rz = -1.45 * ext;
+    out.torso.rz += 0.34 * ext;
+    out.head.rz = -0.05 * ext;
+  }
 
   // Coat tails: follow the thigh, and kick up when falling.
   const flutter = clamp(-inp.vy * 0.05, -0.4, 0.5);
