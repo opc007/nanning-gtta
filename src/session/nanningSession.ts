@@ -12,8 +12,8 @@ import { Shops, type ShopEvent, type ShopState } from '../nanning/shops';
 import { NnHUD } from '../ui/NnHUD';
 import { Missions, tagForShop } from '../nanning/missions';
 import { Crowd } from '../nanning/crowd';
-import { buildModernDistrict, addDistrictClutter, addBackgroundBuildings, type ModernDistrict } from '../render/modernCity';
-import { buildColonnade, loadArcadeParts } from '../render/arcadeKit';
+import { addDistrictClutter, addBackgroundBuildings, type ModernDistrict } from '../render/modernCity';
+import { buildQilouDistrict } from '../render/qilouDistrict';
 import { resolveCircleAabb } from '../systems/Collision';
 
 export interface NanningPayout {
@@ -48,30 +48,13 @@ export class NanningSession {
 
   constructor(private readonly opts: NanningSessionOptions) {
     const { scene, city, seed } = opts;
-    const district = buildModernDistrict(city.buildings, city.shops, seed);
+    const district = buildQilouDistrict(city.buildings, city.shops, seed);
     scene.add(district.group);
     addDistrictClutter(scene, district.clutterTargets, seed);
+    // Modern towers stay: on the real street the old arcade fronts sit directly
+    // against glass high-rises, and that contrast is most of the skyline shot.
     addBackgroundBuildings(scene, city.buildings, seed + 4);
     this.district = district;
-
-    // Kenney Building Kit colonnade, laid along the two pavement runs the
-    // arcade occupies. The kit's parts are merged per part type, so the whole
-    // street's columns cost one draw call rather than one per column.
-    void loadArcadeParts().then((parts) => {
-      if (!parts) return;
-      // One row per pavement, set back against the shopfronts rather than
-      // straddling the carriageway.
-      for (const z of [-143.1, -140.1]) {
-        const col = buildColonnade(parts, {
-          from: new THREE.Vector3(-4.6, 0, z),
-          to: new THREE.Vector3(4.6, 0, z),
-          spacing: 2.6,
-          height: 3.9,
-          girth: 0.3,
-        });
-        if (col) scene.add(col);
-      }
-    });
 
     addBanyans(scene, city.props);
     this.camBlockers = city.props.map((p) => ({ x: p.x, z: p.z, r: 3.6 }));

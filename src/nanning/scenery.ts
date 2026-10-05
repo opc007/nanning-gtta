@@ -280,6 +280,68 @@ function stallVisuals(
   return { meshes: map, signMats };
 }
 
+/**
+ * Storefront signboards on the qilou facade itself.
+ *
+ * The arcade, the columns and the stall boards were all here already; what was
+ * missing was the one thing that makes the street read as 中山路 rather than as
+ * a generic covered walkway — the shop's name over its own door. 复记老友粉,
+ * 中山粉饺, 阿光豆浆油条, all of it was in the data and none of it was on a wall.
+ *
+ * Placed above the 3.3 m overhang so the covered walkway stays walkable, sized
+ * off the unit's real frontage, and keyed by building so the shop system can
+ * swap in the "砸烂咗" texture when the player trashes the place.
+ */
+function facadeSigns(
+  city: NanningCity,
+  parent: THREE.Group,
+): { meshes: Map<number, ShopVisual>; signMats: THREE.MeshBasicMaterial[] } {
+  const map = new Map<number, ShopVisual>();
+  const signMats: THREE.MeshBasicMaterial[] = [];
+  for (const unit of city.shops) {
+    if (unit.nightOnly) continue; // stalls already carry their own board
+    const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(unit.def), toneMapped: false });
+    // Daytime boards are painted, not lit: keep them close to full colour so the
+    // name stays readable, and let the night ramp take them the rest of the way.
+    signMat.userData.dayK = 0.88;
+    signMat.userData.nightK = 1.0;
+    signMat.userData.shopDriven = true;
+    signMats.push(signMat);
+    // Shopfronts stay open through the day, so their interior light is on from
+    // dawn rather than ramping with the night market.
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x1b2228,
+      emissive: 0xffb768,
+      emissiveIntensity: 0.5,
+      roughness: 0.4,
+    });
+
+    const w = Math.max(1.8, Math.min(unit.width - 0.7, 5.2));
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.25), signMat);
+    // Face the middle of the street. Plane normal +Z, so ±π/2 turns it onto ±X.
+    const face = unit.x < 0 ? Math.PI / 2 : -Math.PI / 2;
+    // Nudge proud of the facade along its own normal so it never z-fights.
+    sign.position.set(unit.x + unit.nx * 0.35, 3.02, unit.z + unit.nz * 0.35);
+    sign.rotation.y = face;
+    parent.add(sign);
+
+    // Neon underline, the strip that carries the shop colour after dark.
+    const neonMat = new THREE.MeshBasicMaterial({
+      color: unit.def.signColor,
+      toneMapped: false,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const neon = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.96, 0.07), neonMat);
+    neon.position.set(unit.x + unit.nx * 0.37, 2.74, unit.z + unit.nz * 0.37);
+    neon.rotation.y = face;
+    parent.add(neon);
+
+    map.set(unit.building, { sign, signMat, neon: neonMat, glass, litMats: [neonMat] });
+  }
+  return { meshes: map, signMats };
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 export function addNanningScenery(scene: THREE.Scene, city: NanningCity): StreetScenery {
@@ -333,8 +395,16 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): Street
   const { meshes: stallMeshes, signMats: stallSignMats } = stallVisuals(city, stallRoot);
   scene.add(stallRoot);
 
+  // Storefront boards go in their own root, NOT in stallRoot: the session hides
+  // the stall group until 18:00, and these have to be readable at noon.
+  const signRoot = new THREE.Group();
+  signRoot.name = 'nn-facade-signs';
+  const { meshes: facadeMeshes, signMats: facadeSignMats } = facadeSigns(city, signRoot);
+  for (const [k, v] of facadeMeshes) stallMeshes.set(k, v);
+  scene.add(signRoot);
+
   addLanterns(scene);
-  return { stalls: stallRoot, stallMeshes, signMats: stallSignMats };
+  return { stalls: stallRoot, stallMeshes, signMats: [...stallSignMats, ...facadeSignMats] };
 }
 
 function addLanterns(scene: THREE.Scene): void {
