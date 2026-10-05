@@ -65,20 +65,30 @@ function normalise(geo: THREE.BufferGeometry, width: number, depth: number): THR
   return g;
 }
 
+export interface KitPart {
+  geometry: THREE.BufferGeometry;
+  /** The pack's shared colormap, so the piece is not a white blob. */
+  map: THREE.Texture | null;
+}
+
 /** Load every kit piece. A missing model is skipped, never fatal. */
-export async function loadInteriorKit(): Promise<Map<string, THREE.BufferGeometry>> {
+export async function loadInteriorKit(): Promise<Map<string, KitPart>> {
   const loader = new GLTFLoader();
-  const out = new Map<string, THREE.BufferGeometry>();
+  const out = new Map<string, KitPart>();
   await Promise.all(
     Object.entries(INTERIOR_KIT).map(async ([id, piece]) => {
       try {
         const gltf = await loader.loadAsync(piece.url);
         let found: THREE.BufferGeometry | null = null;
+        let map: THREE.Texture | null = null;
         gltf.scene.traverse((o) => {
           const m = o as THREE.Mesh;
-          if (!found && m.isMesh && m.geometry?.getAttribute('position')) found = m.geometry;
+          if (!found && m.isMesh && m.geometry?.getAttribute('position')) {
+            found = m.geometry;
+            map = (m.material as THREE.MeshStandardMaterial | undefined)?.map ?? null;
+          }
         });
-        if (found) out.set(id, normalise(found, piece.width, piece.depth));
+        if (found) out.set(id, { geometry: normalise(found, piece.width, piece.depth), map });
       } catch {
         // Leave the bucket on its procedural geometry.
       }

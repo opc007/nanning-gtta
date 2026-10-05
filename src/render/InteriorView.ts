@@ -418,15 +418,33 @@ export class InteriorView {
   async useKenneyKit(): Promise<number> {
     const kit = await loadInteriorKit();
     let swapped = 0;
-    for (const [id, geo] of kit) {
+    for (const [id, part] of kit) {
       const mesh = this.instances.get(id as PropId);
       if (!mesh) continue;
       mesh.geometry.dispose();
-      mesh.geometry = geo;
+      mesh.geometry = part.geometry;
       const m = mesh.material as THREE.MeshStandardMaterial;
       // The procedural props carry a vertex-colour attribute; the imported ones
       // do not, and leaving the flag on renders them black.
       m.vertexColors = false;
+      // Kenney packs are one shared colormap, so without the map every piece
+      // comes out as an untextured white blob.
+      m.map = part.map;
+      m.color.set(0xffffff);
+      m.needsUpdate = true;
+      swapped++;
+    }
+    // cup and bowl are decor buckets, not prop buckets — they live in their own
+    // map with their own caps, so the prop pass above never saw them.
+    for (const id of ['cup', 'bowl'] as const) {
+      const part = kit.get(id);
+      const mesh = this.decorMeshes.get(id);
+      if (!part || !mesh) continue;
+      mesh.geometry.dispose();
+      mesh.geometry = part.geometry;
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      m.map = part.map;
+      m.color.set(0xffffff);
       m.needsUpdate = true;
       swapped++;
     }
