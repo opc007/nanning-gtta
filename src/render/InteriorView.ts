@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { loadInteriorKit } from './kenneyInterior';
 import type { NanningBuilding, NanningCity, ShopUnit } from '../nanning/layout';
 import {
   buildInterior,
@@ -405,6 +406,31 @@ export class InteriorView {
       for (const p of layout.props) all.push({ ...p, shopId: layout.shopId });
     }
     return all;
+  }
+
+  /**
+   * Swap the buckets that a code-built box could not credibly stand in for —
+   * steamer stacks, stew pots, freezer cases, cups, bowls — for the Kenney
+   * models. Layout, colliders and instance matrices are untouched; only the
+   * geometry on the bucket changes, so this is safe to call at any time.
+   * Returns how many buckets were actually replaced.
+   */
+  async useKenneyKit(): Promise<number> {
+    const kit = await loadInteriorKit();
+    let swapped = 0;
+    for (const [id, geo] of kit) {
+      const mesh = this.instances.get(id as PropId);
+      if (!mesh) continue;
+      mesh.geometry.dispose();
+      mesh.geometry = geo;
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      // The procedural props carry a vertex-colour attribute; the imported ones
+      // do not, and leaving the flag on renders them black.
+      m.vertexColors = false;
+      m.needsUpdate = true;
+      swapped++;
+    }
+    return swapped;
   }
 
   private writeInstances(): void {

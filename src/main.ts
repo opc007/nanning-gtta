@@ -198,6 +198,9 @@ if (nanning) {
   // Interior orbit sits close to walls; the old 0.5 m near plane clips the doorway.
   env.camera.near = 0.12;
   env.camera.updateProjectionMatrix();
+  // Kenney food/market models for the prop buckets a box cannot fake. Swaps
+  // geometry on buckets that already exist, so the layouts stay authoritative.
+  void interiors.useKenneyKit().then((n) => n && console.info(`[nn] interior kit: ${n} buckets`));
 }
 if (nanning) {
   session = new NanningSession({
