@@ -200,6 +200,13 @@ export function createClipCharacter(
       // the ground.
       const box = new THREE.Box3().setFromObject(model);
       model.position.y = -box.min.y;
+      // Forward-axis correction. `PlayerController` resolves the facing yaw as
+      // atan2(-dirZ, dirX), which is the "+X is forward" convention the
+      // procedural rig was authored against. Kenney Mini Characters are built
+      // facing +Z, so without this quarter turn the whole avatar walks
+      // sideways across its own direction of travel. +90° about Y maps the
+      // model's +Z onto the heading the controller asks for.
+      model.rotation.y += Math.PI / 2;
       model.traverse((o) => {
         o.castShadow = true;
         o.receiveShadow = true;

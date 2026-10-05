@@ -188,7 +188,7 @@ export interface QilouMesh {
   door: THREE.Vector3;
 }
 
-const ARCADE_H = 3.3; // clear height under the overhang
+const ARCADE_H = 4.6; // clear height under the overhang
 const SLAB = 0.35; // overhang slab thickness
 const COL = 0.55; // column side
 

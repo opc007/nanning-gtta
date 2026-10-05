@@ -12,8 +12,12 @@ import { Shops, type ShopEvent, type ShopState } from '../nanning/shops';
 import { NnHUD } from '../ui/NnHUD';
 import { Missions, tagForShop } from '../nanning/missions';
 import { Crowd } from '../nanning/crowd';
-import { addDistrictClutter, addBackgroundBuildings, type ModernDistrict } from '../render/modernCity';
-import { buildQilouDistrict } from '../render/qilouDistrict';
+import {
+  buildModernDistrict,
+  addDistrictClutter,
+  addBackgroundBuildings,
+  type ModernDistrict,
+} from '../render/modernCity';
 import { resolveCircleAabb } from '../systems/Collision';
 
 export interface NanningPayout {
@@ -48,11 +52,16 @@ export class NanningSession {
 
   constructor(private readonly opts: NanningSessionOptions) {
     const { scene, city, seed } = opts;
-    const district = buildQilouDistrict(city.buildings, city.shops, seed);
+    // Building massing stays in `modernCity`, set back behind the arcade.
+    // `scenery.ts` owns everything the player actually reads from the street —
+    // the colonnade, the covered walkway, the lantern garlands, the shop boards
+    // and the 钟鼓楼 — and an earlier attempt to also build the frontage out of
+    // `qilou.ts` put a second storey wall right on top of that arcade, where it
+    // blanked out the shop signs from a street-level camera. The massing here is
+    // deliberately the background: old arcade in front, towers behind.
+    const district = buildModernDistrict(city.buildings, city.shops, seed);
     scene.add(district.group);
     addDistrictClutter(scene, district.clutterTargets, seed);
-    // Modern towers stay: on the real street the old arcade fronts sit directly
-    // against glass high-rises, and that contrast is most of the skyline shot.
     addBackgroundBuildings(scene, city.buildings, seed + 4);
     this.district = district;
 

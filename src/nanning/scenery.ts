@@ -181,7 +181,10 @@ export interface StreetScenery {
   signMats: THREE.MeshBasicMaterial[];
 }
 
-const COL_H = 3.15;
+// Clear height of the covered walkway. 3.15 m put the shop fascia boards flush
+// against the ceiling, so from the street you read the bottom edge of a sign and
+// nothing else — the boards have to sit well clear of the soffit to be readable.
+const COL_H = 4.5;
 
 function arcadeSlabs(): THREE.BufferGeometry[] {
   const parts: THREE.BufferGeometry[] = [];
@@ -316,12 +319,12 @@ function facadeSigns(
       roughness: 0.4,
     });
 
-    const w = Math.max(1.8, Math.min(unit.width - 0.7, 5.2));
+    const w = Math.max(2.4, Math.min(unit.width - 0.7, 6.4));
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.25), signMat);
     // Face the middle of the street. Plane normal +Z, so ±π/2 turns it onto ±X.
     const face = unit.x < 0 ? Math.PI / 2 : -Math.PI / 2;
     // Nudge proud of the facade along its own normal so it never z-fights.
-    sign.position.set(unit.x + unit.nx * 0.35, 3.02, unit.z + unit.nz * 0.35);
+    sign.position.set(unit.x + unit.nx * 0.35, 3.78, unit.z + unit.nz * 0.35);
     sign.rotation.y = face;
     parent.add(sign);
 
@@ -333,7 +336,7 @@ function facadeSigns(
       opacity: 0.9,
     });
     const neon = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.96, 0.07), neonMat);
-    neon.position.set(unit.x + unit.nx * 0.37, 2.74, unit.z + unit.nz * 0.37);
+    neon.position.set(unit.x + unit.nx * 0.37, 3.42, unit.z + unit.nz * 0.37);
     neon.rotation.y = face;
     parent.add(neon);
 
