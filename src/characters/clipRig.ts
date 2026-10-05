@@ -45,6 +45,7 @@ export interface ClipCharacter extends CharacterRig {
   play(name: string, fade?: number): void;
   /** 0..1 through the current one-shot clip, for a deterministic capture. */
   setOneShot(name: OneShot | null, progress: number): void;
+  setMixerTime(t: number, freeze?: boolean): void;
   mixer: THREE.AnimationMixer;
   clips: Map<string, THREE.AnimationClip>;
   setHeadVisible(visible: boolean): void;
@@ -78,6 +79,7 @@ export function createClipCharacter(
   let oneShot: OneShot | null = null;
   let oneShotT = 0;
   let oneShotLen = 1;
+  let frozen = false;
 
   const ensureAnimation = (root: THREE.Object3D, source: THREE.AnimationClip[]): void => {
     if (mixer) return;
@@ -142,7 +144,7 @@ export function createClipCharacter(
       // giveaway that a walk cycle is a single clip being sped up.
       crossFadeTo(pickLocomotion(anim), FADE);
     }
-    mixer.update(d);
+    if (!frozen) mixer.update(d);
   };
 
   const rig: ClipCharacter = {
@@ -152,6 +154,11 @@ export function createClipCharacter(
     clips,
     update,
     play: (name: string, fade = FADE) => crossFadeTo(name, fade),
+    setMixerTime: (t: number, freeze = true) => {
+      if (!mixer) return;
+      frozen = freeze;
+      mixer.setTime(Math.max(0, t));
+    },
     setOneShot: (name: OneShot | null, progress: number) => {
       if (!mixer) return;
       if (!name) {

@@ -178,6 +178,11 @@ if (heroFill) env.scene.add(heroFill);
   get shops() { return session?.shops ?? null; },
   get loop() { return loop; },
   get avatar() { return clipRig ?? avatarRig ?? suitRig; },
+  // Screenshot hook: `?mixer=1.2` puts the animation at 1.2 s and holds it.
+  // Under swiftshader the page runs at ~4 fps, so the mixer only advances a
+  // fraction of a second in ten seconds of wall clock and every capture lands
+  // on the clip's first frame.
+  get mixerTime() { return Number(urlParams.get('mixer') ?? NaN); },
   get interiors() { return interiors; },
 };
 
