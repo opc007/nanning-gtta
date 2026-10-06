@@ -28,10 +28,10 @@ const sig = (c: NanningCity): string =>
 describe('中山路 layout', () => {
   const city = generateNanningCity(1945);
 
-  it('is a 300 m street, 9 m wide, with a 2.4 m raised arcade and 8 m shops', () => {
+  it('is a 300 m street, 9 m wide, with a 3 m arcade and 8 m shops', () => {
     expect(STREET_Z1 - STREET_Z0).toBe(300);
-    expect(STREET_HALF * 2).toBeCloseTo(10.8);
-    expect(ARCADE_DEPTH).toBeCloseTo(1.5);
+    expect(STREET_HALF * 2).toBeCloseTo(9);
+    expect(ARCADE_DEPTH).toBeCloseTo(3.0);
     expect(ARCADE_RAISE).toBeCloseTo(0.15);
     expect(SHOP_DEPTH).toBeCloseTo(8);
     expect(ALLEY_WIDTH).toBe(4);
