@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import type { NanningCity } from '../nanning/layout';
 import { hourFromDay, nightMarketOpen } from '../nanning/clock';
-import { addNanningScenery, updateNanningScenery, addBanyans } from '../nanning/scenery';
+import { addNanningScenery, updateNanningScenery, addBanyans, type BarrierSegment } from '../nanning/scenery';
 import { Shops, type ShopEvent, type ShopState } from '../nanning/shops';
 import { NnHUD } from '../ui/NnHUD';
 import { Missions, tagForShop } from '../nanning/missions';
@@ -39,6 +39,11 @@ export interface NanningSessionOptions {
   onBlip: () => void;
 }
 
+/** Below this a vehicle nudges the railing; above it, the bay comes down. */
+const RAM_SPEED = 6.5;
+/** How far ahead of the car a bay is tested for the ram. */
+const RAM_REACH = 2.6;
+
 export class NanningSession {
   readonly shops: Shops;
   readonly missions: Missions;
@@ -49,6 +54,7 @@ export class NanningSession {
   nightOpen: boolean;
 
   private debtor: ReturnType<Crowd['nearestDebtor']> = null;
+  private readonly barriers: BarrierSegment[];
 
   constructor(private readonly opts: NanningSessionOptions) {
     const { scene, city, seed } = opts;
@@ -69,6 +75,7 @@ export class NanningSession {
     this.camBlockers = city.props.map((p) => ({ x: p.x, z: p.z, r: 3.6 }));
 
     const scenery = addNanningScenery(scene, city);
+    this.barriers = scenery.barriers;
     for (const [key, visual] of scenery.stallMeshes) district.shopMeshes.set(key, visual);
     for (const visual of scenery.stallMeshes.values()) district.glowMats.push(...visual.litMats);
     district.signMats.push(...scenery.signMats);
@@ -127,6 +134,46 @@ export class NanningSession {
    * Push the player out of night-market stalls. Stalls are not in the static
    * grid because they are absent before 18:00.
    */
+  /**
+   * Push a walker out of the intact end-of-street railings. Broken bays drop
+   * out of the test, so once you have knocked a hole through on foot you can
+   * walk out of the gap you made.
+   */
+  resolveBarriers(x: number, z: number, radius: number): { x: number; z: number } {
+    let cx = x;
+    let cz = z;
+    for (const b of this.barriers) {
+      if (b.broken) continue;
+      const hit = resolveCircleAabb(cx, cz, radius, b.box);
+      cx = hit.x;
+      cz = hit.z;
+    }
+    return { x: cx, z: cz };
+  }
+
+  /**
+   * Knock down any railing bay a fast enough vehicle runs into. Returns how many
+   * went, so the caller can pay out the noise and the wanted level. This is the
+   * only way past the barriers at either end of 中山路, which is the point: they
+   * are meant to be an obstacle you break, not a wall.
+   */
+  ramBarriers(x: number, z: number, dirX: number, dirZ: number, speed: number): number {
+    if (speed < RAM_SPEED) return 0;
+    let broke = 0;
+    for (const b of this.barriers) {
+      if (b.broken) continue;
+      const dx = x - (b.box.minX + b.box.maxX) / 2;
+      const dz = z - (b.box.minZ + b.box.maxZ) / 2;
+      const d = Math.hypot(dx, dz);
+      if (d > RAM_REACH) continue;
+      if ((dx / (d || 1)) * -dirX + (dz / (d || 1)) * -dirZ < 0.2) continue;
+      b.broken = true;
+      b.mesh.visible = false;
+      broke++;
+    }
+    return broke;
+  }
+
   resolveStalls(x: number, z: number, radius: number): { x: number; z: number } {
     if (!this.nightOpen) return { x, z };
     let cx = x;

@@ -173,7 +173,17 @@ function mulberry(seed: number): () => number {
   };
 }
 
+/** One bay of end-of-street railing, breakable by ramming it. */
+export interface BarrierSegment {
+  mesh: THREE.Mesh;
+  /** Footprint in world space, used for the push-out and the ram test. */
+  box: { minX: number; maxX: number; minZ: number; maxZ: number };
+  broken: boolean;
+}
+
 export interface StreetScenery {
+  /** End-of-street railings, in bays. Ram one hard enough and it goes. */
+  barriers: BarrierSegment[];
   /** Night-market group. Hidden before 18:00. */
   stalls: THREE.Group;
   stallMeshes: Map<number, ShopVisual>;
@@ -221,16 +231,42 @@ function columnRun(): THREE.BufferGeometry[] {
   return parts;
 }
 
-function barrierRun(): THREE.BufferGeometry[] {
-  const parts: THREE.BufferGeometry[] = [];
+const BARRIER_BAY = 3.0; // metres of railing per breakable section
+const BARRIER_HALF = 18; // railing spans x ∈ [-18, 18]
+
+/**
+ * End-of-street railings, built as separate bays rather than one merged mesh.
+ *
+ * Merged, they were scenery: solid to look at, impossible to get past, and the
+ * street dead-ended at both ends no matter what you drove. As individual bays
+ * each one owns an AABB, so the session can push a walker out of the intact
+ * ones and let a car knock the rest flat — which is what a set of wooden
+ * street barriers on a real 中山路 would do.
+ */
+function barrierRun(): BarrierSegment[] {
+  const out: BarrierSegment[] = [];
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75 });
   for (const z of [STREET_Z0 - 0.2, STREET_Z1 + 0.2]) {
-    parts.push(box(36, 0.08, 0.08, 0, 0.95, z, 0xd5d8de));
-    parts.push(box(36, 0.08, 0.08, 0, 0.55, z, 0xd5d8de));
-    for (let x = -16; x <= 16; x += 2.4) {
-      parts.push(box(0.08, 1.15, 0.08, x, 0.58, z, 0x9aa0a8));
+    for (let x0 = -BARRIER_HALF; x0 < BARRIER_HALF; x0 += BARRIER_BAY) {
+      const w = Math.min(BARRIER_BAY, BARRIER_HALF - x0);
+      const cx = x0 + w / 2;
+      const parts: THREE.BufferGeometry[] = [];
+      parts.push(box(w, 0.08, 0.08, cx, 0.95, z, 0xd5d8de));
+      parts.push(box(w, 0.08, 0.08, cx, 0.55, z, 0xd5d8de));
+      for (let px = x0 + 0.3; px < x0 + w; px += 1.5) {
+        parts.push(box(0.08, 1.15, 0.08, px, 0.58, z, 0x9aa0a8));
+      }
+      const mesh = new THREE.Mesh(merge(parts), mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      out.push({
+        mesh,
+        box: { minX: cx - w / 2, maxX: cx + w / 2, minZ: z - 0.16, maxZ: z + 0.16 },
+        broken: false,
+      });
     }
   }
-  return parts;
+  return out;
 }
 
 function alleyClutter(city: NanningCity): THREE.BufferGeometry[] {
@@ -374,8 +410,14 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): Street
     scene.add(mesh);
   }
 
+  const barriers = barrierRun();
+  const barrierRoot = new THREE.Group();
+  barrierRoot.name = 'nn-barriers';
+  for (const b of barriers) barrierRoot.add(b.mesh);
+  scene.add(barrierRoot);
+
   const dress = new THREE.Mesh(
-    merge([...arcadeSlabs(), ...columnRun(), ...barrierRun(), ...alleyClutter(city)]),
+    merge([...arcadeSlabs(), ...columnRun(), ...alleyClutter(city)]),
     new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0.04 }),
   );
   dress.castShadow = true;
@@ -407,7 +449,7 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): Street
   scene.add(signRoot);
 
   addLanterns(scene);
-  return { stalls: stallRoot, stallMeshes, signMats: [...stallSignMats, ...facadeSignMats] };
+  return { barriers, stalls: stallRoot, stallMeshes, signMats: [...stallSignMats, ...facadeSignMats] };
 }
 
 function addLanterns(scene: THREE.Scene): void {

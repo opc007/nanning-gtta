@@ -138,6 +138,10 @@ const env = new SceneEnv(container, city, {
 });
 
 let session: NanningSession | null = null;
+// Last frame's interpolated car pose, so the rider block — which runs before the
+// pose is computed — can put the avatar on the seat without reordering the
+// frame. One frame of lag is invisible and keeps the stream smooth.
+let carPoseRef: { x: number; z: number; heading: number; speed: number } | null = null;
 
 if (streamedWorld) {
   // env.scene now exists; load the initial ring around spawn (fires the hooks).
@@ -353,6 +357,11 @@ if (nanning) player.heading = -Math.PI / 2;
 follow.snapBehind(player.heading, player.x, player.z, player.y, nanning ? STREET_CAM : FOOT_CAM);
 
 const MAX_HEALTH = 100;
+// Seat height the rider sits at, in metres above the road. A car's bench and an
+// e-bike's saddle are close enough that one number reads correctly for both;
+// the alternative is plumbing a per-vehicle height through the pose for a
+// difference nobody can see at chase-camera distance.
+const SEAT_Y = 0.82;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
 const DAMAGE_PER_SPEED = 5; // health lost per m/s of impact
 const KNOCKBACK = 1.6;
@@ -512,6 +521,11 @@ function updateFoot(dt: number): void {
     const offStall = session.resolveStalls(player.x, player.z, FOOT_RADIUS);
     player.x = offStall.x;
     player.z = offStall.z;
+    // Intact railings at both ends of the street are solid; break a bay with a
+    // car first and the gap is walkable.
+    const offRail = session.resolveBarriers(player.x, player.z, FOOT_RADIUS);
+    player.x = offRail.x;
+    player.z = offRail.z;
     // Keep the slice on the street. The cross roads past the barriers are scenery.
     player.x = Math.max(-42, Math.min(42, player.x));
   }
@@ -745,16 +759,31 @@ function render(alpha: number, frameDt: number): void {
   const az = lerp(player.pz, player.z, alpha);
   const ah = angleLerp(player.ph, player.heading, alpha);
   // Feet height already includes the arcade and interior floors.
-  avatar.position.set(ax, ay, az);
-  avatar.rotation.y = ah;
-  avatar.visible = mode === 'foot';
+  // Riding used to hide the avatar outright (`visible = mode === 'foot'`), which
+  // read as driving an empty vehicle. The rider belongs on the seat: parked on
+  // top of the car, turned with it, sitting.
+  const ridingPose = mode === 'driving' ? carPoseRef : null;
+  if (ridingPose) {
+    avatar.position.set(ridingPose.x, SEAT_Y, ridingPose.z);
+    avatar.rotation.y = ridingPose.heading;
+  } else {
+    avatar.position.set(ax, ay, az);
+    avatar.rotation.y = ah;
+  }
+  avatar.visible = true;
   if (clipRig || avatarRig) {
     const liveRig = clipRig ?? avatarRig!;
-    liveRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
-      state: player.state === 'air' ? 'air' : player.state,
-      stateTime: player.sim.stateTime,
-      vy: player.vy,
-    });
+    if (ridingPose) {
+      // The procedural fallback rig has no clip library, so it has nothing to
+      // sit with — only the Kenney clip character does.
+      clipRig?.play('sit', 0.25);
+    } else {
+      liveRig.update(player.speed, frameDt, {
+        state: player.state === 'air' ? 'air' : player.state,
+        stateTime: player.sim.stateTime,
+        vy: player.vy,
+      });
+    }
     const head = liveRig.limbs.head;
     if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
   } else if (suitRig) {
@@ -776,6 +805,7 @@ function render(alpha: number, frameDt: number): void {
   }
 
   const carPose = vehicles.playerPoseInterp(alpha);
+  carPoseRef = carPose;
   const active =
     mode === 'driving' && carPose ? carPose : { x: ax, z: az, heading: ah, speed: player.speed };
   env.follow(active.x, active.z); // streamed ground/shadow/sun ride the player (no-op when finite)
@@ -791,6 +821,14 @@ function render(alpha: number, frameDt: number): void {
     const v = vehicles.playerVelocity();
     camVx = v.vx;
     camVz = v.vz;
+    // Ramming the end-of-street railings. The car is the only thing on the map
+    // heavy enough to take them out, so this is also the only way either end of
+    // 中山路 is ever open.
+    const spd = Math.hypot(v.vx, v.vz);
+    if (spd > 0.5) {
+      const broke = session?.ramBarriers(carPose.x, carPose.z, v.vx / spd, v.vz / spd, spd) ?? 0;
+      if (broke) sfx.crash();
+    }
   } else {
     camVx = Math.cos(ah) * player.speed;
     camVz = -Math.sin(ah) * player.speed;
@@ -1044,7 +1082,17 @@ function setPaused(p: boolean): void {
 addEventListener('keydown', (e) => {
   // Pointer lock eats the first Escape (the browser unlocks). Don't also pause.
   if (e.code === 'Escape' && document.pointerLockElement) return;
-  if (e.code === 'Escape' && !document.getElementById('splash')) setPaused(!menu.isOpen());
+  if (e.code === 'Escape') {
+    if (document.getElementById('splash')) return;
+    // Escape belongs to whatever is on top. The shop panel is a modal: close it
+    // first, and only fall through to the pause menu once it is gone. Opening
+    // the pause menu under an open shop panel is what left the player stuck.
+    if (session?.hud.isPanelOpen) {
+      session.hud.closePanel();
+      return;
+    }
+    setPaused(!menu.isOpen());
+  }
 });
 
 // Click the view to orbit. Touch uses the right-half drag instead.
