@@ -913,6 +913,15 @@ function render(alpha: number, frameDt: number): void {
   assets.setDaylight(daylight); // window/lamp lights off + glassy by day
   session?.applyDaylight(daylight);
   env.render();
+  // Measure the gap between draws, not the time spent inside render(). WebGL is
+  // asynchronous — the CPU hands the frame off and returns long before the GPU
+  // is done — so timing the call itself only ever sees submission cost and
+  // happily concludes that a GPU-bound scene is running fine. The interval
+  // between frames is throttled by the compositor and does include the stall.
+  const now = performance.now();
+  const sinceDraw = (now - lastDrawAt) / 1000;
+  lastDrawAt = now;
+  if (env.adaptQuality(sinceDraw, adaptiveCap)) onQualityChanged?.();
 
   // Perf telemetry (watched in the smoke run; see performance-vigilance memory).
   if (frameDt > 0) perf.frameMs = perf.frameMs === 0 ? frameDt * 1000 : perf.frameMs * 0.9 + frameDt * 1000 * 0.1;
@@ -1043,11 +1052,23 @@ function completeMission(p: { title: string; reward: number; line: string }): vo
 
 const loop = new GameLoop(update, render);
 
+/**
+ * Resolution cap the adaptive controller scales down from. Kept separate from
+ * `applyOptions` so a quality change from the menu resets the ladder to the top
+ * instead of leaving it wherever the last auto-adjustment left it.
+ */
+let adaptiveCap = 2;
+/** Timestamp of the previous draw, for the adaptive quality controller. */
+let lastDrawAt = performance.now();
+/** Set by the smoke test so a quality step can be reported. */
+let onQualityChanged: (() => void) | null = null;
+
 /** Push the current options everywhere they take live effect. */
 function applyOptions(opts: GameOptions): void {
   sfx.setMasterVolume(opts.masterVolume);
   radio?.setMasterVolume(opts.masterVolume);
-  env.renderer.setPixelRatio(Math.min(window.devicePixelRatio, qualityPixelRatio(opts.quality)));
+  adaptiveCap = qualityPixelRatio(opts.quality);
+  env.renderer.setPixelRatio(Math.min(window.devicePixelRatio, adaptiveCap));
   dayLength = opts.dayLength;
 }
 applyOptions(options);

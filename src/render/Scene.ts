@@ -23,6 +23,12 @@ export interface SceneQuality {
 // In streamed mode the shadow frustum is a tight window around the player rather
 // than the whole (unbounded) world.
 const STREAM_SHADOW_HALF = 90;
+// 中山路 is a finite 300 m street, but its shadow frustum was sized to the whole
+// map: a 2048² map stretched across ±MAP_HALF is about half a metre per texel, so
+// the shadows were both ugly and — the real cost — every object on the map was
+// drawn into the shadow pass each frame. A ±70 m window around the player is
+// 6 cm per texel and only the block you can actually see goes in.
+const FIXED_SHADOW_HALF = 70;
 
 // Night (t=0, the original look) ↔ day palette, lerped by the daylight factor.
 const NIGHT = {
@@ -61,7 +67,12 @@ export class SceneEnv {
     this.streaming = !!quality.streaming;
     // Finite world: the shadow frustum spans the whole map. Streamed world: a
     // tight window that follows the player (city.half is effectively unbounded).
-    this.shadowHalf = this.streaming ? STREAM_SHADOW_HALF : city.half;
+    // A finite city is still walked through; a tight window beats covering the
+    // whole map unless the map is small enough that the window is the map.
+    this.shadowHalf =
+      this.streaming || city.half > FIXED_SHADOW_HALF
+        ? (this.streaming ? STREAM_SHADOW_HALF : FIXED_SHADOW_HALF)
+        : city.half;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxPixelRatio));
@@ -198,10 +209,10 @@ export class SceneEnv {
    * from these in `setTimeOfDay`, which runs every frame). No-op when finite.
    */
   follow(x: number, z: number): void {
-    if (!this.streaming) return;
     this.followX = x;
     this.followZ = z;
-    this.ground.position.set(x, 0, z);
+    // Ground is infinite only in the streamed world; the finite city has its own.
+    if (this.streaming) this.ground.position.set(x, 0, z);
   }
 
   private addRoads(city: City): void {
@@ -222,6 +233,64 @@ export class SceneEnv {
       v.receiveShadow = true;
       this.scene.add(v);
     }
+  }
+
+  /**
+   * Adaptive quality. Fed the real frame time each frame, this walks the
+   * expensive knobs down when the device cannot keep up and back up when it can.
+   *
+   * Resolution is the first thing to go and the last thing to be missed: pixel
+   * count scales the whole pipeline — shadow pass, main pass, and every bloom
+   * blur tap on top. Bloom is the last to go because it is the whole night
+   * street, and a soft image is a worse complaint than a hard one.
+   *
+   * Hysteresis is deliberate: the thresholds do not overlap, so a machine
+   * sitting near the boundary cannot oscillate between two settings forever.
+   */
+  private qScale = 1;
+  private qBloom = true;
+  private qAccum = 0;
+  private qFrames = 0;
+
+  /** Cheap → expensive steps. Index 0 is what a struggling device gets. */
+  static readonly QUALITY_STEPS = [
+    { scale: 0.6, bloom: false },
+    { scale: 0.75, bloom: false },
+    { scale: 1.0, bloom: false },
+    { scale: 1.0, bloom: true },
+  ];
+
+  /**
+   * @param frameTime seconds for the frame just rendered
+   * @returns true if the quality level changed this frame
+   */
+  adaptQuality(frameTime: number, maxPixelRatio: number): boolean {
+    if (!(frameTime > 0)) return false;
+    this.qAccum += frameTime;
+    this.qFrames++;
+    // Judge on a window long enough to ride out a stutter but short enough that
+    // the picture is not left ugly for a second after the machine settles.
+    if (this.qFrames < 45) return false;
+    const avg = this.qAccum / this.qFrames;
+    this.qAccum = 0;
+    this.qFrames = 0;
+
+    const level = SceneEnv.QUALITY_STEPS.indexOf(
+      SceneEnv.QUALITY_STEPS.find((s) => s.scale === this.qScale && s.bloom === this.qBloom)!,
+    );
+    let next = level;
+    if (avg > 1 / 34) next = Math.max(0, level - 1); // under ~34 fps: cheaper
+    else if (avg < 1 / 56) next = Math.min(SceneEnv.QUALITY_STEPS.length - 1, level + 1); // over ~56 fps
+    if (next === level) return false;
+
+    const s = SceneEnv.QUALITY_STEPS[next];
+    this.qScale = s.scale;
+    this.qBloom = s.bloom;
+    this.renderer.setPixelRatio(
+      Math.max(0.4, Math.min(window.devicePixelRatio, maxPixelRatio) * s.scale),
+    );
+    if (this.bloomPass) this.bloomPass.enabled = s.bloom;
+    return true;
   }
 
   /**
