@@ -21,8 +21,14 @@ import { SHOPS, STALLS, type ShopDef, type StreetSection } from './data';
 export const STREET_Z0 = -150;
 export const STREET_Z1 = 150;
 /** Half-width of the open carriageway. Full width is 9 m. */
-export const STREET_HALF = 4.5;
-export const ARCADE_DEPTH = 2.4;
+// Carriageway half-width. The 2.4 m arcade that used to sit inside this width
+// reached more than a quarter of the way across the street, so the two canopies
+// met overhead and the road read as a tunnel you had to squeeze down. The
+// covered walkway is now 1.5 m — still a real 骑楼 arcade you can stand in — and
+// the street it leaves open is 10.8 m. STREET_HALF + ARCADE_DEPTH is held at 6.9
+// so the arcade's outer edge still lands on the shopfront line.
+export const STREET_HALF = 5.4;
+export const ARCADE_DEPTH = 1.5;
 export const ARCADE_RAISE = 0.15;
 export const SHOP_DEPTH = 8;
 export const ALLEY_WIDTH = 4;
