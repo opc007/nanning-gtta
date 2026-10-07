@@ -21,8 +21,25 @@ import { SHOPS, STALLS, type ShopDef, type StreetSection } from './data';
 export const STREET_Z0 = -150;
 export const STREET_Z1 = 150;
 /** Half-width of the open carriageway. Full width is 9 m. */
+// Carriageway half-width. The 2.4 m arcade that used to sit inside this width
+// reached more than a quarter of the way across the street, so the two canopies
+// met overhead and the road read as a tunnel you had to squeeze down. The
+// covered walkway is now 1.5 m — still a real 骑楼 arcade you can stand in — and
+// the street it leaves open is 10.8 m. STREET_HALF + ARCADE_DEPTH is held at 6.9
+// so the arcade's outer edge still lands on the shopfront line.
+// Carriageway half-width, set from the surveyed dimensions of real 骑楼 streets
+// rather than by eye. 北海老街 (珠海路) is recorded at 9 m wide, and the
+// planning literature puts 骑楼街道宽度 at "9 米左右" across the board, so that
+// is the number used here. Everything downstream — shopfront line, building
+// centres, clutter targets, signboards — derives from STREET_HALF + ARCADE_DEPTH,
+// so the whole street moves together when these two change.
 export const STREET_HALF = 4.5;
-export const ARCADE_DEPTH = 2.4;
+// Covered walkway depth. 梧州 gives the typical 骑楼人行道 as 2–3 m (with 4–5 m
+// outliers); 北海's colonnade is quoted at about 4 m, which suits its heavy Roman
+// columns. 3 m sits in the documented range and is what makes the arcade read as
+// somewhere you walk *inside* rather than a kerb awning — the earlier 1.5 m was
+// too shallow to stand in and left the street looking like an ordinary road.
+export const ARCADE_DEPTH = 3.0;
 export const ARCADE_RAISE = 0.15;
 export const SHOP_DEPTH = 8;
 export const ALLEY_WIDTH = 4;
