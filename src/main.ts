@@ -8,6 +8,7 @@ import { createClipCharacter, type ClipCharacter } from './characters/clipRig';
 import { buildCharacter } from './characters/buildCharacter';
 import { PROTAGONIST } from './characters/protagonist';
 import { InteriorView } from './render/InteriorView';
+import { pickTarget, TargetMarker, type Target } from './systems/Targets';
 import { stepPlayer, type PlayerWorld } from './player/PlayerController';
 import { PLAYER } from './player/params';
 import { footprintOverlaps, type Aabb3 } from './systems/Collision';
@@ -142,6 +143,12 @@ let session: NanningSession | null = null;
 // pose is computed — can put the avatar on the seat without reordering the
 // frame. One frame of lag is invisible and keeps the stream smooth.
 let carPoseRef: { x: number; z: number; heading: number; speed: number } | null = null;
+/** What the shared resolver is pointing at this frame, shared with the punch. */
+let currentTarget: Target | null = null;
+let targetMarker: TargetMarker | null = null;
+/** Short-lived label for whatever the last swing connected with. */
+let hitBanner = '';
+let hitBannerT = 0;
 
 if (streamedWorld) {
   // env.scene now exists; load the initial ring around spawn (fires the hooks).
@@ -220,6 +227,7 @@ if (nanning) {
     onPayout: (payout) => completeMission(payout),
     onBlip: () => sfx.footstep(),
   });
+  session.attachProps(interiors!);
 }
 
 // Warm glow that rides the active actor so the night street reads up close.
@@ -375,6 +383,8 @@ let turnPrev = 0; // player's heading a frame ago, for the walk-cycle sidestep l
 let airTime = 0; // seconds since the jump started
 let punchTimer = 0; // counts down through the punch animation
 const PUNCH_TIME = 0.32;
+/** How much a swing takes off a breakable thing. Tuned so a table is four. */
+const PUNCH_DAMAGE = 1;
 
 // Wanted system: "heat" rises with crimes and decays after a grace period;
 // it maps to 0–5 stars, and each star is one chasing police car.
@@ -687,8 +697,24 @@ function update(dt: number): void {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
       punchTimer = PUNCH_TIME;
-      const hitShop = session?.punch(player.x, player.z, dirX, dirZ) ?? false;
-      if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ);
+      // One verb, one resolver. The punch asks what is in front of the player
+      // and acts on the answer, instead of shops and pedestrians each running
+      // their own reach-and-facing test and occasionally disagreeing.
+      const t = currentTarget;
+      if (t) {
+        const res = session?.strikeTarget(t, PUNCH_DAMAGE);
+        if (res) {
+          sfx.punch();
+          if (res.broke) sfx.crash();
+          hitBanner = `${res.label}${res.broke ? ' 砸烂咗' : ' 挨一击'}`;
+          hitBannerT = 1.6;
+        } else {
+          peds.punch(player.x, player.z, dirX, dirZ);
+        }
+      } else {
+        const hitShop = session?.punch(player.x, player.z, dirX, dirZ) ?? false;
+        if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ);
+      }
     }
 
     // Footsteps cadence with travel distance (faster when sprinting).
@@ -759,6 +785,26 @@ function render(alpha: number, frameDt: number): void {
   const az = lerp(player.pz, player.z, alpha);
   const ah = angleLerp(player.ph, player.heading, alpha);
   // Feet height already includes the arcade and interior floors.
+  // Resolve what the player is pointing at, once per frame, and show it. The
+  // punch reads the same answer later in the frame, so aiming and swinging can
+  // never disagree about what "in front of you" means.
+  if (!targetMarker) targetMarker = new TargetMarker(env.scene);
+  if (mode === 'foot' && nanning && session) {
+    currentTarget = pickTarget(session.targets(), {
+      x: player.x, z: player.z,
+      dirX: Math.cos(player.heading), dirZ: -Math.sin(player.heading),
+      reach: 2.6,
+    });
+  } else {
+    currentTarget = null;
+  }
+  targetMarker.update(currentTarget, frameDt);
+  if (hitBannerT > 0) {
+    hitBannerT -= frameDt;
+    if (hitBannerT <= 0) hitBanner = '';
+  }
+  hud.setHitBanner(hitBanner);
+
   // Riding used to hide the avatar outright (`visible = mode === 'foot'`), which
   // read as driving an empty vehicle. The rider belongs on the seat: parked on
   // top of the car, turned with it, sitting.

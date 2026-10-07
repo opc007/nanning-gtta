@@ -32,6 +32,7 @@ export class HUD {
   private readonly radioEl: HTMLElement;
   private readonly carEl: HTMLElement;
   private readonly wantedEl: HTMLElement;
+  private readonly hitEl: HTMLElement;
   private readonly clockEl: HTMLElement;
   private viewX = 0; // streamed-radar centre (the player), set each update
   private viewZ = 0;
@@ -94,6 +95,13 @@ export class HUD {
       'position:absolute;left:50%;top:12px;transform:translateX(-50%);font-size:13px;font-weight:700;' + CHIP;
     this.scoreEl.textContent = '🚶 0';
     root.appendChild(this.scoreEl);
+    // Sits just under the wanted stars, centred, and is empty most of the time.
+    this.hitEl = document.createElement('div');
+    this.hitEl.style.cssText =
+      'position:absolute;left:50%;top:44px;transform:translateX(-50%);font-size:15px;' +
+      'font-weight:800;color:#ffd24a;text-shadow:0 2px 8px rgba(0,0,0,.85);letter-spacing:1px;' +
+      'pointer-events:none;white-space:nowrap;';
+    root.appendChild(this.hitEl);
 
     this.radioEl = document.createElement('div');
     this.radioEl.style.cssText =
@@ -237,6 +245,15 @@ export class HUD {
     ctx.lineTo(px + fz * 4 - fx * 3, py - fx * 4 - fz * 3);
     ctx.closePath();
     ctx.fill();
+  }
+
+  /**
+   * A short label naming whatever the player just hit. Naming the thing is the
+   * point: "木枱 砸烂咗" teaches the mass rules without a tutorial, and without
+   * it a swing that did nothing feels like a dropped input.
+   */
+  setHitBanner(text: string): void {
+    this.hitEl.textContent = text;
   }
 
   setRunOverCount(n: number): void {

@@ -19,6 +19,8 @@ import {
   type ModernDistrict,
 } from '../render/modernCity';
 import { resolveCircleAabb } from '../systems/Collision';
+import type { Target, TargetCandidate } from '../systems/Targets';
+import type { InteriorView } from '../render/InteriorView';
 
 export interface NanningPayout {
   title: string;
@@ -55,6 +57,8 @@ export class NanningSession {
 
   private debtor: ReturnType<Crowd['nearestDebtor']> = null;
   private readonly barriers: BarrierSegment[];
+  /** Furniture, so a swing can land on a table and not only on a person. */
+  private props: InteriorView | null = null;
 
   constructor(private readonly opts: NanningSessionOptions) {
     const { scene, city, seed } = opts;
@@ -119,6 +123,57 @@ export class NanningSession {
   }
 
   /** Punch a shopfront. Returns true when the punch connected with a shop. */
+  /**
+   * Everything the player can hit, in one list, for the shared target resolver.
+   * Peds, shops and railings all answer here rather than each running its own
+   * reach-and-facing test.
+   */
+  targets(): TargetCandidate[] {
+    const out: TargetCandidate[] = [];
+    for (const st of this.shops.states) {
+      out.push({
+        kind: 'shop', id: st.unit.id, x: st.unit.x, z: st.unit.z,
+        hp: st.hp, label: st.unit.def.name,
+        strike: () => { this.shops.hit(st.unit.x, st.unit.z, st.unit.nx, st.unit.nz); return true; },
+      });
+    }
+    for (const b of this.barriers) {
+      if (b.broken) continue;
+      out.push({ kind: 'barrier', id: (b.box.minX + b.box.maxZ).toString(), x: (b.box.minX + b.box.maxX) / 2, z: (b.box.minZ + b.box.maxZ) / 2,
+        label: '护栏' });
+    }
+    return out;
+  }
+
+  /**
+   * Hit whatever the resolver picked, and report what it was. One verb, one
+   * answer, so swinging at a stool and swinging at a counter feel like the
+   * same act even when the outcome is wildly different.
+   */
+  strikeTarget(t: Target, damage: number): { label: string; broke: boolean } | null {
+    if (t.kind === 'shop') {
+      const st = this.shops.states.find((s) => s.unit.id === t.id);
+      if (!st) return null;
+      const ev = this.shops.hit(st.unit.x, st.unit.z, st.unit.nx, st.unit.nz);
+      if (!ev) return null;
+      this.note(ev);
+      return { label: st.unit.def.name, broke: !!st.broken };
+    }
+    if (t.kind === 'prop' && this.props) {
+      return this.props.damageNear(t.x, t.z, 0, 1, 2.2, damage);
+    }
+    return null;
+  }
+
+  /**
+   * Hand the interior view to the session so a swing can land on furniture.
+   * Set by main.ts once both exist — they are built independently and the
+   * session is created first.
+   */
+  attachProps(view: InteriorView): void {
+    this.props = view;
+  }
+
   punch(px: number, pz: number, dirX: number, dirZ: number): boolean {
     const ev = this.shops.hit(px, pz, dirX, dirZ);
     if (!ev) return false;

@@ -134,6 +134,11 @@ export class Sfx {
   gib(): void {
     this.burst(0.18, 520, 0.32);
   }
+  /** A fist connecting, or a fist meeting a table. Short, dry, unsatisfying. */
+  punch(): void {
+    this.burst(0.09, 210, 0.4);
+    this.burst(0.05, 1200, 0.2);
+  }
   /** Timber railing going over: a short splintering crack, not a car wreck. */
   crash(): void {
     this.burst(0.3, 900, 0.5);

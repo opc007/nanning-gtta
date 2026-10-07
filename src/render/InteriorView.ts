@@ -271,6 +271,8 @@ function shellOf(unit: ShopUnit, building: NanningBuilding): ShopShell {
 export class InteriorView {
   readonly group = new THREE.Group();
   private readonly layouts = new Map<string, InteriorLayout>();
+  private readonly propHp = new Map<string, number>();
+  private _propIndex: Map<string, InteriorProp[]> | null = null;
   private readonly shells = new Map<string, ShopShell>();
   private readonly pending: string[] = [];
   private shellMesh: THREE.Mesh | null = null;
@@ -460,9 +462,13 @@ export class InteriorView {
     for (const id of PROP_IDS) {
       const mesh = this.instances.get(id)!;
       const list = buckets.get(id)!;
-      const n = Math.min(list.length, MAX_INST);
+      // A smashed piece keeps its collider and its slot but stops drawing, so
+      // the room does not rearrange itself around the damage and the player
+      // cannot suddenly walk through where a table used to be.
+      const live = list.filter((p) => this.propHp.get(this.propKey(p)) !== 0);
+      const n = Math.min(live.length, MAX_INST);
       for (let i = 0; i < n; i++) {
-        const p = list[i];
+        const p = live[i];
         // Counter / case geometry is authored at a fixed depth. Scale Z to the prop.
         const base = id === 'counter' ? 2.4 : id === 'case' ? 1.2 : id === 'grill' ? 1.1 : p.d;
         const sz = base > 0 ? p.d / base : 1;
@@ -478,6 +484,81 @@ export class InteriorView {
     }
     this.writeDecor();
     this.rebuildSteam();
+  }
+
+  /**
+   * Hit the nearest piece of furniture in front of the player.
+   *
+   * A dining table should come apart when you hit it and a service counter
+   * should not, and the player should be able to feel that difference without
+   * reading a number off a bar. So mass is HP: a table takes four swings, a
+   * glass-fronted case takes one because that is what glass is, and anything
+   * fixed — counters, the grill, the menu board — simply refuses, which is
+   * what a player expects from something bolted to a shop.
+   */
+  damageNear(
+    x: number, z: number, dirX: number, dirZ: number, reach: number, damage: number,
+  ): { label: string; broke: boolean } | null {
+    const BREAKABLE: Partial<Record<PropId, number>> = {
+      'table-square': 4, 'table-round': 4, 'table-high': 4,
+      stool: 1, 'stool-high': 1,
+      case: 1, steamer: 1, pot: 1, lantern: 1,
+    };
+    // A dead prop keeps its slot so the layout does not shift, it just stops
+    // drawing — otherwise a smashed table would let the player walk through
+    // the floor.
+    this.propHp.set('dead', 0);
+    let best: InteriorProp | null = null;
+    let bestScore = -Infinity;
+    for (const [pid, list] of this.propIndex()) {
+      const hp = BREAKABLE[pid as PropId];
+      if (hp === undefined) continue;
+      for (const p of list) {
+        const key = this.propKey(p);
+        if (this.propHp.get(key) === 0) continue;
+        const dx = p.x - x, dz = p.z - z;
+        const d = Math.hypot(dx, dz);
+        if (d > reach || d < 1e-3) continue;
+        const facing = (dx / d) * dirX + (dz / d) * dirZ;
+        if (facing < 0.35) continue;
+        const v = facing * 2 - d / reach;
+        if (v > bestScore) { bestScore = v; best = p; }
+      }
+    }
+    if (!best) return null;
+    const key = this.propKey(best);
+    const left = (this.propHp.get(key) ?? BREAKABLE[best.prop as PropId]!) - damage;
+    this.propHp.set(key, Math.max(0, left));
+    if (left > 0) return { label: this.propLabel(best.prop), broke: false };
+    this.writeInstances();
+    return { label: this.propLabel(best.prop), broke: true };
+  }
+
+  private propKey(p: InteriorProp): string {
+    return `${p.x.toFixed(2)},${p.z.toFixed(2)}`;
+  }
+
+  private propLabel(id: PropId): string {
+    const names: Partial<Record<PropId, string>> = {
+      'table-square': '木枱', 'table-round': '圆枱', 'table-high': '高枱',
+      stool: '凳', 'stool-high': '高凳', case: '雪柜', steamer: '蒸笼',
+      pot: '汤锅', lantern: '灯笼', counter: '柜台', grill: '烧烤炉', menu: '菜单牌',
+    };
+    return names[id] ?? '家俬';
+  }
+
+  private propIndex(): Map<string, InteriorProp[]> {
+    if (this._propIndex) return this._propIndex;
+    const m = new Map<string, InteriorProp[]>();
+    for (const layout of this.layouts.values()) {
+      for (const p of layout.props) {
+        const k = p.prop as string;
+        if (!m.has(k)) m.set(k, []);
+        m.get(k)!.push(p);
+      }
+    }
+    this._propIndex = m;
+    return m;
   }
 
   /**
