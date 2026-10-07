@@ -385,6 +385,12 @@ let punchTimer = 0; // counts down through the punch animation
 const PUNCH_TIME = 0.32;
 /** How much a swing takes off a breakable thing. Tuned so a table is four. */
 const PUNCH_DAMAGE = 1;
+/** Reach of an on-foot swing, shared by every verb. */
+const PUNCH_REACH = 2.6;
+/** How hard a carried person is thrown, m/s. */
+const THROW_POWER = 9;
+/** Talking is a little more forgiving than a punch — you are not aiming. */
+const TALK_REACH = 2.8;
 
 // Wanted system: "heat" rises with crimes and decays after a grace period;
 // it maps to 0–5 stars, and each star is one chasing police car.
@@ -506,10 +512,34 @@ function updateFoot(dt: number): void {
     },
     footWorld,
     dt,
-    { speedMul: 1, carry: 'none', satiety: session?.shops.wallet.satiety ?? 80 },
+    {
+      // Carrying someone makes you slow, and a punch impossible. Without a tax,
+      // picking people up is strictly better than talking to them and nobody
+      // would ever choose to talk.
+      speedMul: peds.carrying() ? 0.55 : 1,
+      carry: 'none',
+      satiety: session?.shops.wallet.satiety ?? 80,
+    },
   );
-  // Grab is wired (G / right click / Y) and intentionally does nothing until props exist.
-  controls.grabPressed();
+  // G grabs whatever the resolver is pointing at, and drops it again. The old
+  // line here read `controls.grabPressed();` and threw the answer away, so the
+  // key was live and did nothing at all — carrying and throwing have been
+  // unreachable since the key was first bound.
+  if (mode === 'foot' && controls.grabPressed()) {
+    const dirX = Math.cos(player.heading);
+    const dirZ = -Math.sin(player.heading);
+    if (peds.carrying()) {
+      // Already holding someone: G lets go, J throws.
+      peds.release(0, dirX, dirZ);
+      hitBanner = '放低咗';
+      hitBannerT = 1.2;
+    } else if (currentTarget?.kind === 'ped') {
+      if (peds.grab(player.x, player.z, dirX, dirZ, PUNCH_REACH)) {
+        hitBanner = '捉住佢';
+        hitBannerT = 1.6;
+      }
+    }
+  }
 
   for (const ev of events) {
     if (ev.kind === 'fallDamage') {
@@ -675,7 +705,19 @@ function update(dt: number): void {
   }
 
   // E opens or closes a shop. F is the only key that enters or leaves a car.
-  if (mode === 'foot' && controls.interactPressed()) session?.interact(true);
+  if (mode === 'foot' && controls.interactPressed()) {
+    // A person in the way is a person you can talk to, and that outranks a shop
+    // only when the shop is not the thing you are standing at.
+    const dirX = Math.cos(player.heading);
+    const dirZ = -Math.sin(player.heading);
+    if (!session?.shops.focused) {
+      const said = peds.talk(player.x, player.z, dirX, dirZ, TALK_REACH);
+      if (said) {
+        hitBanner = said;
+        hitBannerT = 3.0;
+      } else session?.interact(true);
+    } else session?.interact(true);
+  }
   if (controls.mountPressed()) toggleVehicle();
 
   updateWanted(dt);
@@ -696,6 +738,13 @@ function update(dt: number): void {
     if (controls.attackPressed()) {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
+      // Both hands full: a swing becomes a throw.
+      if (peds.carrying()) {
+        peds.release(THROW_POWER, dirX, dirZ);
+        hitBanner = '掷出去';
+        hitBannerT = 1.2;
+        return;
+      }
       punchTimer = PUNCH_TIME;
       // One verb, one resolver. The punch asks what is in front of the player
       // and acts on the answer, instead of shops and pedestrians each running
@@ -709,11 +758,11 @@ function update(dt: number): void {
           hitBanner = `${res.label}${res.broke ? ' 砸烂咗' : ' 挨一击'}`;
           hitBannerT = 1.6;
         } else {
-          peds.punch(player.x, player.z, dirX, dirZ);
+          peds.punch(player.x, player.z, dirX, dirZ, PUNCH_REACH, PUNCH_DAMAGE);
         }
       } else {
         const hitShop = session?.punch(player.x, player.z, dirX, dirZ) ?? false;
-        if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ);
+        if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ, PUNCH_REACH, PUNCH_DAMAGE);
       }
     }
 
@@ -777,7 +826,7 @@ function render(alpha: number, frameDt: number): void {
   // Interpolate every moving thing between its previous and current physics
   // step so motion stays smooth regardless of how steps line up with frames.
   vehicles.render(alpha);
-  peds.render(alpha);
+  peds.render(alpha, peds.holdPose({ x: player.x, z: player.z, heading: player.heading }));
   debris.render(alpha); // shared pool, drawn once per frame
 
   const ax = lerp(player.px, player.x, alpha);

@@ -6,7 +6,12 @@ import { makePed } from '../render/Assets';
 import { Debris } from './Debris';
 import { World, defineComponent } from '../ecs/World';
 
-type State = 'walk' | 'shoved' | 'gibbed';
+/**
+ * 'down' is a person on the floor, not a corpse: they get up. 'carried' is held
+ * over the player's shoulder, which is the only state in which the player, not
+ * the world, decides where they go.
+ */
+type State = 'walk' | 'shoved' | 'gibbed' | 'down' | 'carried';
 
 interface Ped {
   state: State;
@@ -19,6 +24,12 @@ interface Ped {
   turnTimer: number;
   color: number; // shirt colour, reused for gib cubes
   scared: boolean; // fleeing the on-foot player (trembles + runs away)
+  hp: number; // punches stagger, they do not delete
+  /** Who is carrying them, and how long they have been held. */
+  heldBy: number; // player index, -1 when free
+  holdT: number;
+  /** Set while they are mid-sentence, so a talking ped does not walk off. */
+  talking: number;
   vx: number; // velocity while shoved
   vz: number;
   vy: number;
@@ -50,8 +61,11 @@ const GIB_SPEED = 9; // m/s (~32 km/h): at/above this they explode; between, jus
 const SHOVE_TIME = 1.6; // seconds knocked over before getting back up
 const GIB_TIME = 3.5; // seconds gibbed before respawning elsewhere
 const GRAVITY = 18;
+/** Punches needed to put someone on the floor, and to get them off it again. */
+export const PED_HP = 3;
+/** Seconds spent face-down before struggling back to their feet. */
+const DOWN_TIME = 3.2;
 const FLEE_SPEED = 5; // scared pedestrians scurry faster than they stroll
-const PUNCH_RANGE = 2.6; // reach of an on-foot punch
 // Fear triggers off the active player (on foot OR in a car):
 const NEAR_RADIUS = 5.5; // proximity: anything this close scares them (walk-up or slow creep)
 const PATH_LOOK = 18; // vector: a fast threat bearing down from up to this far
@@ -100,6 +114,7 @@ export class Pedestrians {
       const heading = this.rng.range(0, Math.PI * 2);
       const ped: Ped = {
         state: 'walk', x, z, y: 0, heading, tumble: 0, color, scared: false,
+        hp: PED_HP, heldBy: -1, holdT: 0, talking: 0,
         speed: this.rng.range(1, 2.2),
         turnTimer: this.rng.range(1, 5),
         vx: 0, vz: 0, vy: 0, timer: 0,
@@ -132,6 +147,23 @@ export class Pedestrians {
       ped.ph = ped.heading;
       ped.ptumble = ped.tumble;
 
+      if (ped.state === 'carried') {
+        // Held in front of the carrier; the carrier's own position is applied
+        // from outside, so here we only age the hold and keep the timer sane.
+        ped.holdT += dt;
+        ped.timer = 0.1;
+        continue;
+      }
+      if (ped.state === 'down') {
+        ped.timer -= dt;
+        ped.tumble = ped.timer > 0.4 ? Math.PI / 2 : (ped.timer / 0.4) * (Math.PI / 2);
+        if (ped.timer <= 0) {
+          ped.state = 'walk';
+          ped.tumble = 0;
+          ped.scared = true; // and they run
+        }
+        continue;
+      }
       if (ped.state === 'gibbed') {
         ped.timer -= dt;
         if (ped.timer <= 0) this.respawn(ped);
@@ -243,24 +275,117 @@ export class Pedestrians {
    * in front (along dirX,dirZ) — the same pixel burst as a car hit — and score
    * it (which raises heat, like any kill). Returns whether it connected.
    */
-  punch(x: number, z: number, dirX: number, dirZ: number): boolean {
+  /**
+   * The nearest walking pedestrian in the cone, for the shared target resolver.
+   * Returns an index so the caller can act through the public verbs below.
+   */
+  nearest(x: number, z: number, dirX: number, dirZ: number, reach: number): number {
     let best = -1;
-    let bestD2 = PUNCH_RANGE * PUNCH_RANGE;
+    let bestScore = -Infinity;
     for (let i = 0; i < this.peds.length; i++) {
       const ped = this.peds[i];
-      if (ped.state !== 'walk') continue;
+      if (ped.state !== 'walk' || ped.heldBy >= 0) continue;
       const dx = ped.x - x;
       const dz = ped.z - z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 > bestD2) continue;
-      const d = Math.sqrt(d2) || 1e-3;
-      if ((dx / d) * dirX + (dz / d) * dirZ < 0) continue; // must be in front of the punch
-      bestD2 = d2;
-      best = i;
+      const d = Math.hypot(dx, dz);
+      if (d > reach || d < 1e-3) continue;
+      const facing = (dx / d) * dirX + (dz / d) * dirZ;
+      if (facing < 0.35) continue;
+      const v = facing * facing * 2.2 - d / reach;
+      if (v > bestScore) { bestScore = v; best = i; }
     }
-    if (best < 0) return false;
-    this.gib(this.peds[best], { vx: dirX * GIB_SPEED, vz: dirZ * GIB_SPEED, isPlayer: true });
+    return best;
+  }
+
+  /** A few words for whoever you stop. Cantonese, because this is 中山路. */
+  talk(x: number, z: number, dirX: number, dirZ: number, reach: number): string | null {
+    const i = this.nearest(x, z, dirX, dirZ, reach);
+    if (i < 0) return null;
+    const ped = this.peds[i];
+    ped.talking = 2.5;
+    ped.heading = Math.atan2(-dirZ, dirX) + Math.PI; // turn to face the player
+    return this.pickLine(i);
+  }
+
+  private pickLine(i: number): string {
+    const lines = [
+      '唔好意思，赶时间啊。',
+      '今日人好多，唔够位。',
+      '食咗未？老友粉喎。',
+      '再往前就系粉饺嗰间。',
+      '夜市要六点先开嘅。',
+    ];
+    return lines[(i * 7 + this.tick) % lines.length];
+  }
+
+  /**
+   * A punch lands, staggers, and eventually puts someone on the floor. It used
+   * to delete them outright: `gib` was the only outcome, which is a punch that
+   * removes a person from the world and reads as a bug no matter how the debris
+   * is coloured. Getting up is the part that makes it a person.
+   */
+  punch(x: number, z: number, dirX: number, dirZ: number, reach: number, damage: number): boolean {
+    const i = this.nearest(x, z, dirX, dirZ, reach);
+    if (i < 0) return false;
+    const ped = this.peds[i];
+    ped.hp -= damage;
+    ped.talking = 0;
+    this.shove(ped, { vx: dirX * SHOVE_SPEED * 0.8, vz: dirZ * SHOVE_SPEED * 0.8 });
+    ped.scared = true; // and they remember your face
+    if (ped.hp <= 0) {
+      ped.hp = PED_HP;
+      ped.state = 'down';
+      ped.timer = DOWN_TIME;
+      ped.tumble = Math.PI / 2;
+      ped.y = 0;
+    }
     return true;
+  }
+
+  /**
+   * Pick someone up. Holding a person costs you: you walk slower and you cannot
+   * swing. Without that cost, carrying is strictly better than talking, and
+   * nobody would ever choose to talk.
+   */
+  grab(x: number, z: number, dirX: number, dirZ: number, reach: number): boolean {
+    const i = this.nearest(x, z, dirX, dirZ, reach);
+    if (i < 0) return false;
+    const ped = this.peds[i];
+    ped.state = 'carried';
+    ped.heldBy = 0;
+    ped.holdT = 0;
+    ped.vx = ped.vz = ped.vy = 0;
+    ped.tumble = 0;
+    ped.scared = false;
+    return true;
+  }
+
+  /** Let go. `power` throws them; zero just drops them at your feet. */
+  release(power: number, dirX: number, dirZ: number): boolean {
+    for (const ped of this.peds) {
+      if (ped.state !== 'carried') continue;
+      ped.heldBy = -1;
+      ped.holdT = 0;
+      if (power > 0) {
+        ped.state = 'shoved';
+        ped.timer = SHOVE_TIME;
+        ped.vx = dirX * power;
+        ped.vz = dirZ * power;
+        ped.vy = 2.5;
+        ped.scared = true;
+      } else {
+        ped.state = 'walk';
+        ped.scared = true;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /** Carrying someone? Movement is taxed and the fist is busy. */
+  carrying(): boolean {
+    for (const ped of this.peds) if (ped.state === 'carried') return true;
+    return false;
   }
 
   private gib(ped: Ped, imp: { vx: number; vz: number; isPlayer: boolean }): void {
@@ -282,16 +407,48 @@ export class Pedestrians {
     ped.group.visible = true;
   }
 
-  render(alpha: number): void {
-    this.drawPeds(this.world, alpha);
+  /** How many pedestrians exist, for the target resolver. */
+  count(): number {
+    return this.peds.length;
+  }
+
+  /** Read-only view of pedestrian `i`, for the target resolver. */
+  at(i: number): { x: number; z: number; hp: number; state: string; heldBy: number } | null {
+    const p = this.peds[i];
+    return p ? { x: p.x, z: p.z, hp: p.hp, state: p.state, heldBy: p.heldBy } : null;
+  }
+
+  render(alpha: number, held: { x: number; y: number; z: number } | null = null): void {
+    this.drawPeds(this.world, alpha, held);
   }
 
   /** Render system: position meshes, interpolating between physics steps. */
-  private drawPeds(w: World, alpha: number): void {
+  /**
+   * Where the carried person is held: out in front, at chest height, tilted.
+   * Called by main with the carrier's pose so the two never drift apart.
+   */
+  holdPose(carrier: { x: number; z: number; heading: number }): { x: number; y: number; z: number } | null {
+    for (const ped of this.peds) {
+      if (ped.state !== 'carried') continue;
+      const fx = Math.cos(carrier.heading);
+      const fz = -Math.sin(carrier.heading);
+      return { x: carrier.x + fx * 0.85, y: 1.05, z: carrier.z + fz * 0.85 };
+    }
+    return null;
+  }
+
+  private drawPeds(w: World, alpha: number, held: { x: number; y: number; z: number } | null): void {
     this.tick++;
     for (const e of w.query(Pedestrian)) {
       const ped = w.get(e, Pedestrian)!;
       if (ped.state === 'gibbed') continue; // hidden while exploded
+      if (ped.state === 'carried' && held) {
+        // Drawn at the carrier's shoulder rather than interpolating toward a
+        // position the simulation never put them in.
+        ped.group.position.set(held.x, held.y, held.z);
+        ped.group.rotation.set(-0.5, ped.heading, 0.2);
+        continue;
+      }
       // A fast little tremble (visual only) while scared.
       let sx = 0;
       let sz = 0;

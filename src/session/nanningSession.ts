@@ -21,6 +21,7 @@ import {
 import { resolveCircleAabb } from '../systems/Collision';
 import type { Target, TargetCandidate } from '../systems/Targets';
 import type { InteriorView } from '../render/InteriorView';
+import { PED_HP, type Pedestrians } from '../systems/Pedestrians';
 
 export interface NanningPayout {
   title: string;
@@ -128,8 +129,18 @@ export class NanningSession {
    * Peds, shops and railings all answer here rather than each running its own
    * reach-and-facing test.
    */
-  targets(): TargetCandidate[] {
+  targets(peds?: Pedestrians): TargetCandidate[] {
     const out: TargetCandidate[] = [];
+    if (peds) {
+      for (let i = 0; i < peds.count(); i++) {
+        const pd = peds.at(i);
+        if (!pd) continue;
+        out.push({
+          kind: 'ped', id: i, x: pd.x, z: pd.z, label: '街坊',
+          hp: pd.hp, maxHp: PED_HP,
+        });
+      }
+    }
     for (const st of this.shops.states) {
       out.push({
         kind: 'shop', id: st.unit.id, x: st.unit.x, z: st.unit.z,
