@@ -63,7 +63,14 @@ export class SceneEnv {
 
   constructor(container: HTMLElement, city: City, quality: SceneQuality = {}) {
     const maxPixelRatio = quality.maxPixelRatio ?? 2;
-    const shadowMapSize = quality.shadowMapSize ?? 2048;
+    // 1024, not 2048. A 2048² map is 4.2 Mpx — measured against a 320x200 canvas
+    // at 0.064 Mpx, the shadow pass was drawing ~65x more pixels than the view
+    // the player was actually looking at, and it did that every frame. That is
+    // the fixed per-frame cost that made the game resolution-independent in
+    // the worst way: 0.23 fps at 1000x620 and 0.85 fps at 320x200, because the
+    // canvas was never the bottleneck. Paired with the ±70 m follow window,
+    // 1024 still gives ~14 cm shadow texels, which is fine for a street.
+    const shadowMapSize = quality.shadowMapSize ?? 1024;
     this.streaming = !!quality.streaming;
     // Finite world: the shadow frustum spans the whole map. Streamed world: a
     // tight window that follows the player (city.half is effectively unbounded).
@@ -270,7 +277,11 @@ export class SceneEnv {
     this.qFrames++;
     // Judge on a window long enough to ride out a stutter but short enough that
     // the picture is not left ugly for a second after the machine settles.
-    if (this.qFrames < 45) return false;
+    // 90 frames, not 45. Each step calls setPixelRatio, which reallocates the
+    // drawing buffer — doing that every two seconds on a device that is already
+    // struggling is how you talk a weak GPU into losing its context. Decide
+    // less often, and never step twice in a row without a fresh measurement.
+    if (this.qFrames < 90) return false;
     const avg = this.qAccum / this.qFrames;
     this.qAccum = 0;
     this.qFrames = 0;
@@ -288,6 +299,13 @@ export class SceneEnv {
     this.qBloom = s.bloom;
     this.renderer.setPixelRatio(
       Math.max(0.4, Math.min(window.devicePixelRatio, maxPixelRatio) * s.scale),
+    );
+    // A lost context leaves the ladder pointing at settings nothing is drawing
+    // with. Reset it so the next successful frame starts from the top again.
+    this.renderer.domElement.addEventListener(
+      'webglcontextrestored',
+      () => { this.qAccum = 0; this.qFrames = 0; },
+      { once: true },
     );
     if (this.bloomPass) this.bloomPass.enabled = s.bloom;
     return true;

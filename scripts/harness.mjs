@@ -39,3 +39,15 @@ export async function hold(p, keys, ms) {
   for (const k of keys) await p.keyboard.up(k);
   await p.waitForTimeout(250);
 }
+
+/** Read the bits of world state a gameplay assertion needs. */
+export async function probe(p) {
+  return p.evaluate(() => {
+    const n = window.__nn, pl = n.player;
+    return {
+      x: +pl.x.toFixed(3), y: +pl.y.toFixed(3), z: +pl.z.toFixed(3),
+      speed: +pl.speed.toFixed(3), heading: +pl.heading.toFixed(3),
+      grounded: pl.grounded,
+    };
+  });
+}
