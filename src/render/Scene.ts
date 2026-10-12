@@ -319,9 +319,10 @@ export class SceneEnv {
    */
   render(): void {
     if (this.composer) {
-      // Bloom tracks the day cycle: a noon sky must not bloom.
+      // Bloom tracks the day cycle: a noon sky must not bloom. Cap the night
+      // end so fascia characters stay readable (Issue #6 / PR #5: no white-out).
       const d = daylightFactor(this.lastTimeOfDay);
-      if (this.bloomPass) this.bloomPass.strength = 0.12 + 0.62 * (1 - d);
+      if (this.bloomPass) this.bloomPass.strength = 0.08 + 0.28 * (1 - d);
       this.composer.render();
     } else {
       this.renderer.render(this.scene, this.camera);

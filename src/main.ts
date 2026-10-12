@@ -262,7 +262,16 @@ const debris = new Debris(env.scene, world);
 // `?stream=1` keeps the upstream world with no ambient traffic (unchanged).
 const trafficCount = streaming ? 0 : nanning ? 8 : touch ? 24 : 40;
 const vehicles = new Vehicles(env.scene, city, world, debris, trafficCount);
-const peds = new Pedestrians(env.scene, city, world, debris, streaming ? 0 : touch ? 28 : 60);
+// Nanning's Crowd already places Kenney Mini Characters on the carriageway.
+// Spawning the upstream capsule peds on top of that left blue/green box people
+// in every acceptance shot — keep them for `?stream=1` only.
+const peds = new Pedestrians(
+  env.scene,
+  city,
+  world,
+  debris,
+  streaming ? 0 : nanning ? 0 : touch ? 28 : 60,
+);
 const hud = new HUD(container, city, touch, streaming);
 
 let touchRoot: HTMLElement | undefined;
