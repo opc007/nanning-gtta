@@ -19,6 +19,7 @@
  */
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export interface KitPiece {
@@ -55,13 +56,12 @@ export const INTERIOR_KIT: Record<string, KitPiece> = {
  * Centre on XZ, sit on y=0, and scale so the footprint matches the prop it is
  * standing in for. `min` of the two ratios keeps the piece inside the slot
  * rather than spilling onto the aisle.
+ *
+ * Must keep the index buffer: Kenney GLBs are indexed, and dropping it turns
+ * sequential verts into a triangle soup (the peach "shard" look).
  */
 function normalise(geo: THREE.BufferGeometry, width: number, depth: number): THREE.BufferGeometry {
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', geo.getAttribute('position').clone());
-  if (geo.getAttribute('normal')) g.setAttribute('normal', geo.getAttribute('normal').clone());
-  if (geo.getAttribute('uv')) g.setAttribute('uv', geo.getAttribute('uv').clone());
-
+  const g = geo.clone();
   g.computeBoundingBox();
   const bb = g.boundingBox!;
   const sx = bb.max.x - bb.min.x;
@@ -88,46 +88,87 @@ export interface KitPart {
    * Carry that through so swapping the bucket does not paint them white.
    */
   color: number;
+  /** True when geometry carries a `color` attribute from multi-part merge. */
+  vertexColors: boolean;
 }
 
 /**
- * Pull the largest mesh out of a GLB. Furniture Kit pieces are often a small
- * tree of parts; merging them without matching materials turns into shards, so
- * we take the heaviest mesh and leave the rest. Food Kit pieces are already a
- * single mesh and pass through unchanged.
+ * Pack every mesh in a GLB into one geometry. Multi-part Furniture Kit pieces
+ * (stool body + cushion, cabinet + doors) only read as furniture when all
+ * parts survive; a single "largest mesh" pick leaves floating panels.
+ *
+ * Parts with different `baseColorFactor`s get a vertex-colour attribute so one
+ * InstancedMesh material can still show both tones. A shared colormap (Food
+ * Kit) wins and vertex colours stay off.
  */
-function pickMesh(
+function packMeshes(
   root: THREE.Object3D,
-): { geo: THREE.BufferGeometry; map: THREE.Texture | null; color: number } | null {
-  let bestGeo: THREE.BufferGeometry | null = null;
-  let bestMatrix = new THREE.Matrix4();
-  let bestMap: THREE.Texture | null = null;
-  let bestColor = 0xffffff;
-  let bestN = 0;
+): { geo: THREE.BufferGeometry; map: THREE.Texture | null; color: number; vertexColors: boolean } | null {
   root.updateMatrixWorld(true);
+  const parts: THREE.BufferGeometry[] = [];
+  let sharedMap: THREE.Texture | null = null;
+  let fallbackColor = 0xffffff;
+  let sawColor = false;
+  const colors = new Set<number>();
+
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh || !m.geometry?.getAttribute('position')) return;
-    const n = m.geometry.getAttribute('position').count;
-    if (n <= bestN) return;
-    bestN = n;
-    bestGeo = m.geometry;
-    bestMatrix.copy(m.matrixWorld);
-    const mat = m.material as THREE.MeshStandardMaterial | undefined;
-    bestMap = mat?.map ?? null;
-    bestColor = mat?.color?.getHex() ?? 0xffffff;
+    const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as
+      | THREE.MeshStandardMaterial
+      | undefined;
+    if (mat?.map && !sharedMap) sharedMap = mat.map;
+    const hex = mat?.color?.getHex() ?? 0xffffff;
+    colors.add(hex);
+    if (!sawColor) {
+      fallbackColor = hex;
+      sawColor = true;
+    }
+    const g = m.geometry.clone();
+    g.applyMatrix4(m.matrixWorld);
+    for (const name of Object.keys(g.attributes)) {
+      if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+    }
+    if (!g.getAttribute('uv')) {
+      const n = g.getAttribute('position').count;
+      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+    }
+    parts.push(g);
   });
-  if (!bestGeo) return null;
-  const g = (bestGeo as THREE.BufferGeometry).clone();
-  g.applyMatrix4(bestMatrix);
-  for (const name of Object.keys(g.attributes)) {
-    if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+  if (!parts.length) return null;
+
+  const useVertexColors = !sharedMap && colors.size > 1;
+  if (useVertexColors) {
+    // Re-walk to paint each part before merge — colour must match the clone order.
+    let i = 0;
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.geometry?.getAttribute('position')) return;
+      const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as
+        | THREE.MeshStandardMaterial
+        | undefined;
+      const c = new THREE.Color(mat?.color?.getHex() ?? 0xffffff);
+      const g = parts[i++];
+      const n = g.getAttribute('position').count;
+      const arr = new Float32Array(n * 3);
+      for (let v = 0; v < n; v++) {
+        arr[v * 3] = c.r;
+        arr[v * 3 + 1] = c.g;
+        arr[v * 3 + 2] = c.b;
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    });
   }
-  if (!g.getAttribute('uv')) {
-    const n = g.getAttribute('position').count;
-    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
-  }
-  return { geo: g, map: bestMap, color: bestColor };
+
+  const geo =
+    parts.length === 1 ? parts[0] : (mergeGeometries(parts, false) as THREE.BufferGeometry | null);
+  if (!geo) return null;
+  return {
+    geo,
+    map: sharedMap,
+    color: sharedMap ? 0xffffff : fallbackColor,
+    vertexColors: useVertexColors,
+  };
 }
 
 /** Load every kit piece. A missing model is skipped, never fatal. */
@@ -138,12 +179,13 @@ export async function loadInteriorKit(): Promise<Map<string, KitPart>> {
     Object.entries(INTERIOR_KIT).map(async ([id, piece]) => {
       try {
         const gltf = await loader.loadAsync(piece.url);
-        const packed = pickMesh(gltf.scene);
+        const packed = packMeshes(gltf.scene);
         if (packed) {
           out.set(id, {
             geometry: normalise(packed.geo, piece.width, piece.depth),
             map: packed.map,
             color: packed.color,
+            vertexColors: packed.vertexColors,
           });
         }
       } catch {

@@ -874,7 +874,8 @@ function render(alpha: number, frameDt: number): void {
     avatar.position.set(ax, ay, az);
     avatar.rotation.y = ah;
   }
-  avatar.visible = true;
+  // Acceptance stills set __hideAvatar so the hero does not block the room.
+  avatar.visible = !(globalThis as unknown as { __hideAvatar?: boolean }).__hideAvatar;
   if (clipRig || avatarRig) {
     const liveRig = clipRig ?? avatarRig!;
     if (ridingPose) {

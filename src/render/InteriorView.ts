@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { loadInteriorKit } from './kenneyInterior';
+import { loadInteriorKit, type KitPart } from './kenneyInterior';
 import type { NanningBuilding, NanningCity, ShopUnit } from '../nanning/layout';
 import {
   buildInterior,
@@ -294,7 +294,7 @@ export class InteriorView {
     scene.add(this.group);
     // Warm, soft, short-range — strong enough to see Kenney tables, weak enough
     // that fascia through the open door stays readable (Issue #6 lighting note).
-    this.fill = new THREE.PointLight(0xffd2a8, 7, 12, 1.8);
+    this.fill = new THREE.PointLight(0xffd2a8, 9, 14, 1.6);
     this.fill.visible = false;
     this.group.add(this.fill);
     for (const id of PROP_IDS) {
@@ -435,20 +435,21 @@ export class InteriorView {
   async useKenneyKit(): Promise<number> {
     const kit = await loadInteriorKit();
     let swapped = 0;
-    for (const [id, part] of kit) {
-      const mesh = this.instances.get(id as PropId);
-      if (!mesh) continue;
+    const apply = (mesh: THREE.InstancedMesh, part: KitPart) => {
       mesh.geometry.dispose();
       mesh.geometry = part.geometry;
       const m = mesh.material as THREE.MeshStandardMaterial;
-      // The procedural props carry a vertex-colour attribute; the imported ones
-      // do not, and leaving the flag on renders them black.
-      m.vertexColors = false;
-      // Kenney food packs share a colormap; Furniture Kit pieces often only
-      // carry a baseColorFactor. Keep whichever the loader handed us.
+      // Multi-part Furniture Kit merges paint a `color` attribute; Food Kit
+      // pieces use a colormap instead. Match the material to whichever landed.
+      m.vertexColors = part.vertexColors;
       m.map = part.map;
-      m.color.setHex(part.map ? 0xffffff : part.color);
+      m.color.setHex(part.map || part.vertexColors ? 0xffffff : part.color);
       m.needsUpdate = true;
+    };
+    for (const [id, part] of kit) {
+      const mesh = this.instances.get(id as PropId);
+      if (!mesh) continue;
+      apply(mesh, part);
       swapped++;
     }
     // cup and bowl are decor buckets, not prop buckets — they live in their own
@@ -457,12 +458,7 @@ export class InteriorView {
       const part = kit.get(id);
       const mesh = this.decorMeshes.get(id);
       if (!part || !mesh) continue;
-      mesh.geometry.dispose();
-      mesh.geometry = part.geometry;
-      const m = mesh.material as THREE.MeshStandardMaterial;
-      m.map = part.map;
-      m.color.setHex(part.map ? 0xffffff : part.color);
-      m.needsUpdate = true;
+      apply(mesh, part);
       swapped++;
     }
     return swapped;
