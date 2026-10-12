@@ -294,7 +294,7 @@ export class InteriorView {
     scene.add(this.group);
     // Warm, soft, short-range — strong enough to see Kenney tables, weak enough
     // that fascia through the open door stays readable (Issue #6 lighting note).
-    this.fill = new THREE.PointLight(0xffd2a8, 18, 11, 1.7);
+    this.fill = new THREE.PointLight(0xffd2a8, 7, 12, 1.8);
     this.fill.visible = false;
     this.group.add(this.fill);
     for (const id of PROP_IDS) {
