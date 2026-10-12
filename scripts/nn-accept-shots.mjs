@@ -152,31 +152,30 @@ for (let i = 0; i < shopIds.length; i++) {
     console.log('  miss', shopIds[i]);
     continue;
   }
-  // Approach the door so the interior streamer builds the room, then look in
-  // from the arcade (outside looking in) — avoids near-plane black walls.
+  // Enter so the streamer builds the room and the soft fill light turns on.
   await page.evaluate((u) => {
-    window.__game.teleport(u.x + u.nx * 1.2, u.z, Math.atan2(-u.nz, -u.nx));
+    window.__game.teleport(u.x + u.nx * 1.0, u.z, Math.atan2(-u.nz, -u.nx));
   }, unit);
-  for (let k = 0; k < 16; k++) await page.waitForTimeout(180);
-  // Step just inside to force the shell, then pull the camera back out.
+  for (let k = 0; k < 10; k++) await page.waitForTimeout(150);
   await page.evaluate((u) => {
-    window.__game.teleport(u.x - u.nx * 2.5, u.z, Math.atan2(-u.nz, -u.nx));
+    window.__game.teleport(u.x - u.nx * 1.8, u.z, Math.atan2(-u.nz, -u.nx));
   }, unit);
-  for (let k = 0; k < 10; k++) await page.waitForTimeout(180);
+  for (let k = 0; k < 14; k++) await page.waitForTimeout(150);
   const info = await page.evaluate(() => ({
     inside: window.__game?.interior === true,
     props: (window.__game?.interiorProps?.() ?? []).length,
-    kit: window.__nn?.interiors ? true : false,
   }));
   console.log('  ', shopIds[i], info);
   await page.evaluate((u) => {
     const n = window.__nn;
-    // From the arcade lip, looking inland at the counter / tables.
-    n.camera.position.set(u.x + u.nx * 2.2, 1.85, u.z);
-    n.camera.lookAt(u.cx - u.nx * 0.8, 1.05, u.cz);
+    // Just inside the door, looking at the back counter / tables.
+    const doorX = u.x - u.nx * 1.7;
+    const backX = u.cx - u.nx * 2.8;
+    n.camera.position.set(doorX, 1.55, u.z);
+    n.camera.lookAt(backX, 1.05, u.cz);
     globalThis.freezeCam = true;
   }, unit);
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(800);
   await shot(`interior-${names[i]}`);
 }
 
