@@ -5,7 +5,7 @@
  */
 import { chromium } from 'playwright';
 const URL = process.env.URL;
-const b = await chromium.launch({ executablePath: '/workspace/.home/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome',
+const b = await chromium.launch({ executablePath: '/home/ubuntu/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome',
   args: ['--use-angle=swiftshader','--enable-unsafe-swiftshader','--use-gl=angle','--no-sandbox'] });
 const p = await b.newPage({ viewport: { width: 1000, height: 640 }, ignoreHTTPSErrors: true });
 p.setDefaultTimeout(180000);

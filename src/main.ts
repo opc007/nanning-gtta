@@ -879,6 +879,10 @@ function render(alpha: number, frameDt: number): void {
         vy: player.vy,
       });
     }
+    // `?mixer=<sec>` freezes the Kenney clip at an absolute time so
+    // swiftshader screenshots are not stuck on frame 0 of the cycle.
+    const mt = Number(urlParams.get('mixer') ?? NaN);
+    if (Number.isFinite(mt) && clipRig) clipRig.setMixerTime(mt, true);
     const head = liveRig.limbs.head;
     if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
   } else if (suitRig) {
