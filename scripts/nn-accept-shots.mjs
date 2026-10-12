@@ -54,13 +54,13 @@ async function poseClip(clip, t) {
   await page.waitForTimeout(500);
 }
 
-/** Face the camera: place cam on +Z of player, character heading toward cam. */
+/** Face the camera. Kenney Mini Characters are +Z-authored with a +90° model yaw. */
 async function faceCam(dist = 2.6, height = 1.55, aim = 1.05) {
   await page.evaluate(([dist, height, aim]) => {
     const n = window.__nn;
     const pl = n.player;
-    // Heading 0 = +X; put camera on -X so we look at the face after Kenney +90° model yaw.
-    window.__game.teleport(pl.x, pl.z, 0);
+    // Heading π faces −X; camera sits on −X looking back at the face.
+    window.__game.teleport(pl.x, pl.z, Math.PI);
     n.camera.position.set(pl.x - dist, height, pl.z);
     n.camera.lookAt(pl.x, aim, pl.z);
     globalThis.freezeCam = true;
@@ -152,26 +152,31 @@ for (let i = 0; i < shopIds.length; i++) {
     console.log('  miss', shopIds[i]);
     continue;
   }
-  // Walk to the door first so the streamer queues the room, then step inside.
+  // Approach the door so the interior streamer builds the room, then look in
+  // from the arcade (outside looking in) — avoids near-plane black walls.
   await page.evaluate((u) => {
-    window.__game.teleport(u.x - u.nx * 0.6, u.z, Math.atan2(-u.nz, -u.nx));
+    window.__game.teleport(u.x + u.nx * 1.2, u.z, Math.atan2(-u.nz, -u.nx));
   }, unit);
-  await page.waitForTimeout(1500);
+  for (let k = 0; k < 16; k++) await page.waitForTimeout(180);
+  // Step just inside to force the shell, then pull the camera back out.
   await page.evaluate((u) => {
-    window.__game.teleport(u.cx, u.cz, Math.atan2(-u.nz, -u.nx));
+    window.__game.teleport(u.x - u.nx * 2.5, u.z, Math.atan2(-u.nz, -u.nx));
   }, unit);
-  // Allow several stream ticks (one room per frame).
-  for (let k = 0; k < 12; k++) await page.waitForTimeout(200);
-  const inside = await page.evaluate(() => window.__game?.interior === true);
-  console.log('  ', shopIds[i], 'inside=', inside, 'at', unit.cx, unit.cz);
+  for (let k = 0; k < 10; k++) await page.waitForTimeout(180);
+  const info = await page.evaluate(() => ({
+    inside: window.__game?.interior === true,
+    props: (window.__game?.interiorProps?.() ?? []).length,
+    kit: window.__nn?.interiors ? true : false,
+  }));
+  console.log('  ', shopIds[i], info);
   await page.evaluate((u) => {
     const n = window.__nn;
-    // Camera just inside the door looking toward the back wall / counter.
-    n.camera.position.set(u.x - u.nx * 1.4, 1.65, u.z + 0.15);
-    n.camera.lookAt(u.cx - u.nx * 0.5, 1.15, u.cz);
+    // From the arcade lip, looking inland at the counter / tables.
+    n.camera.position.set(u.x + u.nx * 2.2, 1.85, u.z);
+    n.camera.lookAt(u.cx - u.nx * 0.8, 1.05, u.cz);
     globalThis.freezeCam = true;
   }, unit);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(700);
   await shot(`interior-${names[i]}`);
 }
 
