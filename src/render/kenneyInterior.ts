@@ -20,7 +20,6 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export interface KitPiece {
   url: string;
@@ -91,37 +90,44 @@ export interface KitPart {
   color: number;
 }
 
-/** Merge every mesh under a GLB into one geometry (multi-part furniture). */
-function mergeMeshes(
+/**
+ * Pull the largest mesh out of a GLB. Furniture Kit pieces are often a small
+ * tree of parts; merging them without matching materials turns into shards, so
+ * we take the heaviest mesh and leave the rest. Food Kit pieces are already a
+ * single mesh and pass through unchanged.
+ */
+function pickMesh(
   root: THREE.Object3D,
 ): { geo: THREE.BufferGeometry; map: THREE.Texture | null; color: number } | null {
-  const geos: THREE.BufferGeometry[] = [];
-  let map: THREE.Texture | null = null;
-  let color = 0xffffff;
+  let bestGeo: THREE.BufferGeometry | null = null;
+  let bestMatrix = new THREE.Matrix4();
+  let bestMap: THREE.Texture | null = null;
+  let bestColor = 0xffffff;
+  let bestN = 0;
   root.updateMatrixWorld(true);
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh || !m.geometry?.getAttribute('position')) return;
-    const g = m.geometry.clone();
-    g.applyMatrix4(m.matrixWorld);
-    for (const name of Object.keys(g.attributes)) {
-      if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
-    }
-    if (!g.getAttribute('uv')) {
-      const n = g.getAttribute('position').count;
-      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
-    }
-    geos.push(g);
+    const n = m.geometry.getAttribute('position').count;
+    if (n <= bestN) return;
+    bestN = n;
+    bestGeo = m.geometry;
+    bestMatrix.copy(m.matrixWorld);
     const mat = m.material as THREE.MeshStandardMaterial | undefined;
-    if (mat) {
-      if (!map && mat.map) map = mat.map;
-      if (color === 0xffffff && mat.color) color = mat.color.getHex();
-    }
+    bestMap = mat?.map ?? null;
+    bestColor = mat?.color?.getHex() ?? 0xffffff;
   });
-  if (!geos.length) return null;
-  if (geos.length === 1) return { geo: geos[0], map, color };
-  const merged = mergeGeometries(geos, false);
-  return merged ? { geo: merged, map, color } : { geo: geos[0], map, color };
+  if (!bestGeo) return null;
+  const g = (bestGeo as THREE.BufferGeometry).clone();
+  g.applyMatrix4(bestMatrix);
+  for (const name of Object.keys(g.attributes)) {
+    if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+  }
+  if (!g.getAttribute('uv')) {
+    const n = g.getAttribute('position').count;
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+  }
+  return { geo: g, map: bestMap, color: bestColor };
 }
 
 /** Load every kit piece. A missing model is skipped, never fatal. */
@@ -132,7 +138,7 @@ export async function loadInteriorKit(): Promise<Map<string, KitPart>> {
     Object.entries(INTERIOR_KIT).map(async ([id, piece]) => {
       try {
         const gltf = await loader.loadAsync(piece.url);
-        const packed = mergeMeshes(gltf.scene);
+        const packed = pickMesh(gltf.scene);
         if (packed) {
           out.set(id, {
             geometry: normalise(packed.geo, piece.width, piece.depth),
