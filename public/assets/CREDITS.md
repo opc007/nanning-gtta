@@ -6,38 +6,53 @@ All packs downloaded from kenney.nl as zip archives.
 
 | Pack | Used for | Files staged under |
 |---|---|---|
-| Mini Characters | protagonist + NPC | `kenney/chars/` |
-| Blocky Characters | staged for upright proportions | `kenney/blocky/` |
+| Mini Characters | protagonist (`character-male-d`) + street NPCs | `kenney/chars/` |
+| Blocky Characters | NPC variety only (not the hero) | `kenney/blocky/` |
 | Building Kit | arcade columns, walls, windows | `kenney/building/` |
 | City Kit Commercial | background buildings, awnings | `kenney/city-commercial/` |
 | City Kit Roads | road tiles | `kenney/roads/` |
 | Car Kit | taxis, cars | `kenney/car/` |
-| Furniture Kit | tables, chairs, counters | `kenney/furniture/` |
-| Food Kit | bowls, pots, steamers, cups | `kenney/food/` |
+| Furniture Kit | tables, stools, counters, stoves | `kenney/furniture/` |
+| Food Kit | bowls, pots, cups | `kenney/food/` |
 | Fantasy Town Kit | stalls, stools, arch | `kenney/fantasy-town/` |
 | Holiday Kit | lanterns, light strings | `kenney/holiday/` |
-| Mini Market | cash register, shelves | `kenney/mini-market/` |
+| Mini Market | cash register, shelves, freezer | `kenney/mini-market/` |
 
 `Textures/` directories are kept next to their GLBs because the glTF files
 reference `Textures/colormap.png` by a relative path. Renaming or flattening
-those directories leaves every material untextured.
+those directories leaves every material untextured. The Furniture Kit ships as
+`Models/GLTF format/*.glb` (embedded materials, no external atlas) — that path
+is preserved as authored.
 
-Total staged: ~58 GLB, well under the 15 MB budget.
+Total staged: well under the 15 MB budget (~6.6 MB).
 
-## Why two character packs
+## Hero decision (opc li, 2026-10-05)
 
-Mini Characters is the pack the task brief names, and its figures are chibi:
-large head, rounded torso, legs too short to read. Verified by loading the
-GLB in a bare three.js page with no mixer and no clips — it renders the same
-way there, so the silhouette is the artwork, not a rig or scale fault on our
-side. That cannot satisfy the brief's other requirement, a 1.7 m upright suited
-protagonist.
+**A: Mini Characters `character-male-d`.** Acceptance is “Q版西装男主”, not
+“1.7 m upright”. Blocky Characters stay in the tree for NPC variety only.
 
-Blocky Characters is the same publisher's normal-proportion pack, and it stands
-upright. It is also built from rigid parts parented to bones (`skins: 0`,
-meshes named `leg-left` / `torso` / `head`) rather than skinned meshes, so an
-`AnimationMixer` only has to rotate bones — a simpler path than the skinned
-route. Staged and ready; which one is the default is a call for the reviewer.
+## Poly Pizza
+
+| Model | Source | Licence | Staged as |
+|---|---|---|---|
+| red lantern | [Sophie Kim](https://poly.pizza/m/7PZhxLFiGc2) | CC-BY 3.0 | `poly/red-lantern.glb` |
+| Chukaman Steamer | Quaternius (Issue #6 Poly Pizza entry `40XM5hLr4Y`) | CC0 1.0 | `poly/steamer.glb` |
+
+**Attribution (CC-BY 3.0):** “red lantern” by Sophie Kim
+(https://poly.pizza/m/7PZhxLFiGc2) / CC-BY 3.0.
+
+### Still blocked from this environment
+
+Cloudflare Turnstile on `poly.pizza` / `static.poly.pizza` refused curl,
+Playwright, and Wayback for:
+
+- E-bike — https://poly.pizza/m/fPLXByG4Vx5 (“Scooter” by Poly by Google, CC-BY 3.0)
+- Wok — https://poly.pizza/m/3rvYMi6EF1 (“Pan Wok” by MilkAndBanana, CC0)
+
+Stand-ins until those GLBs can be dropped into `public/assets/poly/`:
+procedural e-bike mesh (`props.ts`) and Kenney Food Kit `pot-lid.glb` for the
+stew pot / wok bucket. Dropping `ebike.glb` / `wok.glb` into `poly/` is enough
+to wire them later.
 
 ## Kenney licence
 

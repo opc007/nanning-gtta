@@ -429,10 +429,10 @@ export class InteriorView {
       // The procedural props carry a vertex-colour attribute; the imported ones
       // do not, and leaving the flag on renders them black.
       m.vertexColors = false;
-      // Kenney packs are one shared colormap, so without the map every piece
-      // comes out as an untextured white blob.
+      // Kenney food packs share a colormap; Furniture Kit pieces often only
+      // carry a baseColorFactor. Keep whichever the loader handed us.
       m.map = part.map;
-      m.color.set(0xffffff);
+      m.color.setHex(part.map ? 0xffffff : part.color);
       m.needsUpdate = true;
       swapped++;
     }
@@ -446,7 +446,7 @@ export class InteriorView {
       mesh.geometry = part.geometry;
       const m = mesh.material as THREE.MeshStandardMaterial;
       m.map = part.map;
-      m.color.set(0xffffff);
+      m.color.setHex(part.map ? 0xffffff : part.color);
       m.needsUpdate = true;
       swapped++;
     }
