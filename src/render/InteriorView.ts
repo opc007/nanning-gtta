@@ -286,10 +286,17 @@ export class InteriorView {
   private readonly steamGeo = new THREE.BufferGeometry();
   private readonly steamMat: THREE.ShaderMaterial;
   private readonly steam: THREE.Points;
+  /** Soft warm fill so furniture reads indoors without bloom blowout. */
+  private readonly fill: THREE.PointLight;
 
   constructor(scene: THREE.Scene) {
     this.group.name = 'interiors';
     scene.add(this.group);
+    // Warm, soft, short-range — strong enough to see Kenney tables, weak enough
+    // that fascia through the open door stays readable (Issue #6 lighting note).
+    this.fill = new THREE.PointLight(0xffd2a8, 18, 11, 1.7);
+    this.fill.visible = false;
+    this.group.add(this.fill);
     for (const id of PROP_IDS) {
       // Lanterns and pots carry their own vertex colours.
       const material =
@@ -397,6 +404,14 @@ export class InteriorView {
         inside = shell;
         break;
       }
+    }
+    if (inside) {
+      this.fill.visible = true;
+      // Sit above the aisle, a little inland of the player, so tables catch the
+      // light without a hot spot on the near wall.
+      this.fill.position.set(px - inside.nx * 1.2, 2.15, pz);
+    } else {
+      this.fill.visible = false;
     }
     return { colliders, inside };
   }
