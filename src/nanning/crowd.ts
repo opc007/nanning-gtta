@@ -14,6 +14,7 @@
 import * as THREE from 'three';
 import { CHATTER, COP_SHOUT, CHATTER_REACT } from './data';
 import { stepCrowd, type CrowdMover } from './crowdStep';
+import { NpcPool, preloadCrowd } from '../characters/npcPool';
 
 export interface Talker {
   x: number;
@@ -88,40 +89,30 @@ function drawBubble(sp: THREE.Sprite, text: string, color = '#f3ece0'): void {
   tex.needsUpdate = true;
 }
 
-/** A lo-poly 街坊 body — slightly more than a capsule so the bubbles have a host. */
-function makePerson(color: number, shirt: number): THREE.Group {
-  const g = new THREE.Group();
-  const skin = new THREE.MeshStandardMaterial({ color: 0xd8b48a, roughness: 0.8 });
-  const cloth = new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.9 });
-  const trouser = new THREE.MeshStandardMaterial({ color, roughness: 0.92 });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.62, 4, 8), cloth);
-  body.position.y = 0.82;
-  body.castShadow = true;
-  g.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), skin);
-  head.position.y = 1.42;
-  head.castShadow = true;
-  g.add(head);
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.205, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: 0x1c1a18, roughness: 1 }));
-  hair.position.y = 1.45;
-  g.add(hair);
-  for (const s of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.42, 3, 6), trouser);
-    leg.position.set(0, 0.33, s * 0.1);
-    leg.castShadow = true;
-    g.add(leg);
-  }
-  return g;
-}
-
-const SHIRTS = [0xd8543f, 0x3f7fb0, 0x4c9a63, 0xc9a227, 0x8a4a9c, 0xd07a3a];
+/**
+ * The pool the street draws its bodies from, and the clip each one idles on.
+ * `makePerson` used to build a capsule torso, a sphere head and two capsule
+ * legs here; the brief rules that out.
+ */
+const NPC_POOL = [
+  'character-male-d', 'character-male-a', 'character-male-b', 'character-male-c',
+  'character-male-e', 'character-female-a', 'character-female-b',
+];
 
 export class Crowd {
   readonly talkers: Talker[] = [];
   private readonly bubbles: THREE.Sprite[] = [];
   private t = 0;
 
+  private readonly mixers: THREE.AnimationMixer[] = [];
+  private readonly npcs = new NpcPool();
+  private tick(dt: number): void {
+    for (const m of this.mixers) m.update(Math.min(dt, 0.05));
+  }
+
+
   constructor(scene: THREE.Scene, targets: { x: number; z: number; name: string; amount: number }[], ambient = 14) {
+    preloadCrowd();
     let seed = 17;
     const rnd = (): number => {
       seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -129,36 +120,44 @@ export class Crowd {
     };
 
     for (const t of targets) {
-      const g = makePerson(0x2a2f38, SHIRTS[Math.floor(rnd() * SHIRTS.length)]);
-      g.position.set(t.x, 0, t.z);
-      g.rotation.y = rnd() * Math.PI * 2;
-      scene.add(g);
-      const b = makeBubble();
-      b.position.set(0, 2.1, 0);
-      g.add(b);
-      this.bubbles.push(b);
-      this.talkers.push({
-        x: t.x, z: t.z, name: t.name, amount: t.amount, paid: false,
-        group: g, bubble: b, line: '', t: rnd() * 6,
+      this.place(scene, t.x, t.z, NPC_POOL[Math.floor(rnd() * NPC_POOL.length)], rnd(), {
+        name: t.name, amount: t.amount, paid: false, t: rnd() * 6,
       });
     }
 
     // Ambient chatter along the carriageway. The old scatter covered the whole
     // 560 m city; on a single street that put most people inside buildings.
     for (let i = 0; i < ambient; i++) {
-      const g = makePerson(0x232830, SHIRTS[Math.floor(rnd() * SHIRTS.length)]);
       const x = (i % 2 === 0 ? -1 : 1) * (1.6 + rnd() * 2.2);
       const z = -140 + (i + 0.5) * (280 / Math.max(1, ambient));
-      g.position.set(x, 0, z);
-      scene.add(g);
-      const b = makeBubble();
-      b.position.set(0, 2.1, 0);
-      g.add(b);
-      this.bubbles.push(b);
-      this.talkers.push({
-        x, z, name: '', amount: 0, paid: true, group: g, bubble: b, line: '', t: rnd() * 8,
+      this.place(scene, x, z, NPC_POOL[Math.floor(rnd() * NPC_POOL.length)], rnd() * Math.PI * 2, {
+        name: '', amount: 0, paid: true, t: rnd() * 8,
       });
     }
+  }
+
+  /**
+   * Put one pedestrian on the street. The model arrives asynchronously, so a
+   * miss is not an error: the body simply joins a moment later.
+   */
+  private place(
+    scene: THREE.Scene, x: number, z: number, file: string, facing: number,
+    talker: { name: string; amount: number; paid: boolean; t: number },
+  ): void {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = facing;
+    scene.add(g);
+    const b = makeBubble();
+    b.position.set(0, 2.1, 0);
+    g.add(b);
+    this.bubbles.push(b);
+    this.talkers.push({ x, z, group: g, bubble: b, line: '', ...talker });
+    void this.npcs.spawn(file, 'idle').then((made) => {
+      if (!made) return;
+      g.add(made.group);
+      this.mixers.push(made.mixer);
+    });
   }
 
   /** The nearest unpaid debt target, or null. */
@@ -203,6 +202,7 @@ export class Crowd {
    */
   update(dt: number, px: number, pz: number, heat: number, smashes: number): void {
     this.t += dt;
+    this.tick(dt);
     const movers: CrowdMover[] = this.talkers.map((t) => {
       const v = t.group.userData.vel as THREE.Vector3 | undefined;
       return {
