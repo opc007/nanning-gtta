@@ -9,10 +9,11 @@
  *
  * Each import is normalised to sit on the floor, centred on its own footprint,
  * and scaled so its largest horizontal extent matches what the procedural prop
- * occupied. Non-uniform fitting would be more precise and is not worth it: the
- * instance matrices already carry a per-prop X/Z scale from the layout, and the
- * colliders come from the same numbers, so a uniform fit keeps visual and
- * physical extents in the same ballpark.
+ * occupied. Tables and stools also take an explicit target height: Kenney's
+ * `table.glb` is authored at coffee-table height (~0.31 m), so a footprint-only
+ * uniform fit leaves dining surfaces at knee height. When `height` is set we
+ * stretch Y independently to match the layout collider (0.75 / 1.05 / 0.45–0.75);
+ * other kit pieces keep the old uniform footprint scale.
  *
  * Menu boards and hanging lanterns stay on their canvas / Poly Pizza paths —
  * the brief says keep those.
@@ -27,6 +28,11 @@ export interface KitPiece {
   /** Footprint the procedural prop used, in metres. */
   width: number;
   depth: number;
+  /**
+   * Standing height in metres (layout collider). When set, Y is scaled
+   * independently of the XZ footprint fit.
+   */
+  height?: number;
 }
 
 const FURN = 'assets/kenney/furniture/Models/GLTF%20format';
@@ -37,11 +43,12 @@ const POLY = 'assets/poly';
 /** Bucket id → the Kenney / Poly model that replaces it. */
 export const INTERIOR_KIT: Record<string, KitPiece> = {
   // Furniture Kit (folder is "GLTF format", files are still .glb).
-  'table-square': { url: `${FURN}/table.glb`, width: 0.8, depth: 0.8 },
-  'table-round': { url: `${FURN}/tableRound.glb`, width: 1.05, depth: 1.05 },
-  'table-high': { url: `${FURN}/desk.glb`, width: 0.7, depth: 0.7 },
-  stool: { url: `${FURN}/stoolBarSquare.glb`, width: 0.34, depth: 0.34 },
-  'stool-high': { url: `${FURN}/stoolBar.glb`, width: 0.32, depth: 0.32 },
+  // Heights match PROP_SIZE in interiors.ts: dining 0.75, bar 1.05, stools 0.45–0.75.
+  'table-square': { url: `${FURN}/table.glb`, width: 0.8, depth: 0.8, height: 0.75 },
+  'table-round': { url: `${FURN}/tableRound.glb`, width: 1.05, depth: 1.05, height: 0.76 },
+  'table-high': { url: `${FURN}/desk.glb`, width: 0.7, depth: 0.7, height: 1.05 },
+  stool: { url: `${FURN}/stoolBarSquare.glb`, width: 0.34, depth: 0.34, height: 0.45 },
+  'stool-high': { url: `${FURN}/stoolBar.glb`, width: 0.32, depth: 0.32, height: 0.75 },
   counter: { url: `${FURN}/kitchenCabinet.glb`, width: 0.7, depth: 2.4 },
   grill: { url: `${FURN}/kitchenStove.glb`, width: 0.7, depth: 1.1 },
   // Food / market / Poly Pizza steamer (Quaternius CC0 mirror of the Issue #6 asset).
@@ -55,19 +62,27 @@ export const INTERIOR_KIT: Record<string, KitPiece> = {
 /**
  * Centre on XZ, sit on y=0, and scale so the footprint matches the prop it is
  * standing in for. `min` of the two ratios keeps the piece inside the slot
- * rather than spilling onto the aisle.
+ * rather than spilling onto the aisle. When `height` is given, stretch Y to
+ * that target so coffee-table meshes become dining / bar height.
  *
  * Must keep the index buffer: Kenney GLBs are indexed, and dropping it turns
  * sequential verts into a triangle soup (the peach "shard" look).
  */
-function normalise(geo: THREE.BufferGeometry, width: number, depth: number): THREE.BufferGeometry {
+function normalise(
+  geo: THREE.BufferGeometry,
+  width: number,
+  depth: number,
+  height?: number,
+): THREE.BufferGeometry {
   const g = geo.clone();
   g.computeBoundingBox();
   const bb = g.boundingBox!;
   const sx = bb.max.x - bb.min.x;
+  const sy = bb.max.y - bb.min.y;
   const sz = bb.max.z - bb.min.z;
-  const k = Math.min(sx > 1e-4 ? width / sx : 1, sz > 1e-4 ? depth / sz : 1);
-  g.scale(k, k, k);
+  const kFoot = Math.min(sx > 1e-4 ? width / sx : 1, sz > 1e-4 ? depth / sz : 1);
+  const ky = height != null && sy > 1e-4 ? height / sy : kFoot;
+  g.scale(kFoot, ky, kFoot);
   g.computeBoundingBox();
   const b2 = g.boundingBox!;
   g.translate(
@@ -182,7 +197,7 @@ export async function loadInteriorKit(): Promise<Map<string, KitPart>> {
         const packed = packMeshes(gltf.scene);
         if (packed) {
           out.set(id, {
-            geometry: normalise(packed.geo, piece.width, piece.depth),
+            geometry: normalise(packed.geo, piece.width, piece.depth, piece.height),
             map: packed.map,
             color: packed.color,
             vertexColors: packed.vertexColors,
