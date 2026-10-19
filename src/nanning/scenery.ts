@@ -24,7 +24,7 @@ import { nightMarketOpen } from './clock';
 import { makeBanyanGeometry, makeSignTexture } from '../render/nnArch';
 import type { ShopVisual } from '../render/modernCity';
 import { loadArcadeParts, buildColonnade, recolorWall } from '../render/arcadeKit';
-import { addPolyLanterns } from '../render/polyProps';
+import { addPolyLanterns, addPolyEbikes } from '../render/polyProps';
 
 const merge = (parts: THREE.BufferGeometry[]): THREE.BufferGeometry =>
   mergeGeometries(parts) as THREE.BufferGeometry;
@@ -419,6 +419,7 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): Street
   scene.add(dress);
   void mountKenneyArcade(scene);
   void mountPolyLanterns(scene, city);
+  void mountPolyEbikes(scene, city);
 
   const stallRoot = new THREE.Group();
   stallRoot.name = 'nn-stalls';
@@ -537,6 +538,25 @@ async function mountPolyLanterns(scene: THREE.Scene, city: NanningCity): Promise
     });
   }
   await addPolyLanterns(scene, spots);
+}
+
+/**
+ * Poly Pizza scooters parked at the kerb in front of the warm shops (CC-BY).
+ * Parallel to the street so fuji-door / night stills pick them up.
+ */
+async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<void> {
+  const WARM = new Set(['fuji', 'zhongshan-fenjiao', 'rongji', 'hengzhou']);
+  const spots: { x: number; z: number; heading: number }[] = [];
+  for (const unit of city.shops) {
+    if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
+    // Kerb just inside the carriageway, a step in front of the arcade.
+    const x = unit.nx * (STREET_HALF - 0.75);
+    // Parked along +Z; flip 180° on the west kerb so noses face the same way.
+    const heading = unit.nx > 0 ? Math.PI / 2 : -Math.PI / 2;
+    spots.push({ x, z: unit.z - 1.1, heading });
+    spots.push({ x, z: unit.z + 1.1, heading });
+  }
+  await addPolyEbikes(scene, spots);
 }
 
 function addLanterns(scene: THREE.Scene): void {

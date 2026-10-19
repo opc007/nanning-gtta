@@ -4,6 +4,7 @@
  * Writes into OUT_DIR and mirrors into MEDIA_DIR when set.
  *
  * ONLY=interiors  — retake the four shop rooms only (default for polish loops)
+ * ONLY=poly       — fenjiao (wok) + fuji-door + night-street (e-bike kerb)
  * ONLY=all        — full Issue #6 checklist
  */
 import { chromium } from 'playwright';
@@ -252,7 +253,57 @@ async function shootInterior(defId, name) {
   });
 }
 
-// ── Optional: hero / door / night (skipped when ONLY=interiors) ─────────────
+async function waitPolyEbikes() {
+  for (let i = 0; i < 40; i++) {
+    const n = await page.evaluate(() => {
+      const g = window.__nn?.scene?.getObjectByName?.('nn-poly-ebikes');
+      return g?.children?.length ?? 0;
+    });
+    if (n > 0) return n;
+    await page.waitForTimeout(200);
+  }
+  return 0;
+}
+
+async function shootFujiDoor() {
+  console.log('fuji door');
+  await goto('t=0.45&hud=0');
+  await waitPolyEbikes();
+  const fuji = await shopUnit('fuji');
+  if (!fuji) return;
+  await page.evaluate((f) => {
+    window.__game.teleport(f.x + f.nx * 5.5, f.z, Math.atan2(-f.nz, -f.nx));
+  }, fuji);
+  await page.waitForTimeout(1800);
+  await page.evaluate((f) => {
+    const n = window.__nn;
+    // Slightly wider frame so kerb scooters stay in shot with the fascia.
+    n.camera.position.set(f.x + f.nx * 9.0, 2.6, f.z + 1.8);
+    n.camera.lookAt(f.x + f.nx * 0.3, 1.4, f.z);
+    globalThis.freezeCam = true;
+  }, fuji);
+  await page.waitForTimeout(600);
+  await shot('fuji-door');
+}
+
+async function shootNightStreet() {
+  console.log('night');
+  await goto('t=0.82&hud=0');
+  await waitPolyEbikes();
+  await page.evaluate(() => window.__game.teleport(0, -35, Math.PI / 2));
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => {
+    const n = window.__nn;
+    const pl = n.player;
+    n.camera.position.set(pl.x - 0.5, 2.6, pl.z + 10);
+    n.camera.lookAt(pl.x + 2.5, 2.0, pl.z - 6);
+    globalThis.freezeCam = true;
+  });
+  await page.waitForTimeout(800);
+  await shot('night-street');
+}
+
+// ── Optional: hero / door / night (skipped when ONLY=interiors|poly) ─────────
 if (ONLY === 'all') {
   console.log('hero poses');
   await goto('t=0.45&hud=0&hero=1&mixer=0.55');
@@ -285,55 +336,36 @@ if (ONLY === 'all') {
   await faceCam(2.5, 1.35, 0.9);
   await shot('hero-pickup');
 
-  console.log('fuji door');
-  await goto('t=0.45&hud=0');
-  const fuji = await shopUnit('fuji');
-  if (fuji) {
-    await page.evaluate((f) => {
-      window.__game.teleport(f.x + f.nx * 5.5, f.z, Math.atan2(-f.nz, -f.nx));
-    }, fuji);
-    await page.waitForTimeout(1800);
-    await page.evaluate((f) => {
-      const n = window.__nn;
-      n.camera.position.set(f.x + f.nx * 8.2, 2.8, f.z);
-      n.camera.lookAt(f.x + f.nx * 0.3, 2.5, f.z);
-      globalThis.freezeCam = true;
-    }, fuji);
-    await page.waitForTimeout(600);
-    await shot('fuji-door');
+  await shootFujiDoor();
+}
+
+if (ONLY === 'poly') {
+  await shootFujiDoor();
+}
+
+// ── Shop interiors ──────────────────────────────────────────────────────────
+if (ONLY === 'all' || ONLY === 'interiors' || ONLY === 'poly') {
+  console.log('interiors');
+  if (ONLY === 'interiors' || ONLY === 'poly') await goto('t=0.45&hud=0');
+  // Give the Kenney furniture kit a moment after boot before entering rooms.
+  await page.waitForTimeout(2500);
+
+  const shops =
+    ONLY === 'poly'
+      ? [['zhongshan-fenjiao', 'fenjiao']]
+      : [
+          ['fuji', 'laoyou'],
+          ['zhongshan-fenjiao', 'fenjiao'],
+          ['rongji', 'bbq'],
+          ['hengzhou', 'milktea'],
+        ];
+  for (const [id, name] of shops) {
+    await shootInterior(id, name);
   }
 }
 
-// ── Four shop interiors ─────────────────────────────────────────────────────
-console.log('interiors');
-if (ONLY === 'interiors') await goto('t=0.45&hud=0');
-// Give the Kenney furniture kit a moment after boot before entering rooms.
-await page.waitForTimeout(2500);
-
-const shops = [
-  ['fuji', 'laoyou'],
-  ['zhongshan-fenjiao', 'fenjiao'],
-  ['rongji', 'bbq'],
-  ['hengzhou', 'milktea'],
-];
-for (const [id, name] of shops) {
-  await shootInterior(id, name);
-}
-
-if (ONLY === 'all') {
-  console.log('night');
-  await goto('t=0.82&hud=0');
-  await page.evaluate(() => window.__game.teleport(0, -35, Math.PI / 2));
-  await page.waitForTimeout(2500);
-  await page.evaluate(() => {
-    const n = window.__nn;
-    const pl = n.player;
-    n.camera.position.set(pl.x - 0.5, 2.6, pl.z + 10);
-    n.camera.lookAt(pl.x + 2.5, 2.0, pl.z - 6);
-    globalThis.freezeCam = true;
-  });
-  await page.waitForTimeout(800);
-  await shot('night-street');
+if (ONLY === 'all' || ONLY === 'poly') {
+  await shootNightStreet();
 }
 
 console.log('errs:', errs.length ? errs.slice(0, 5) : 'none');

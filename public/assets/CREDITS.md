@@ -37,22 +37,16 @@ Total staged: well under the 15 MB budget (~6.6 MB).
 |---|---|---|---|
 | red lantern | [Sophie Kim](https://poly.pizza/m/7PZhxLFiGc2) | CC-BY 3.0 | `poly/red-lantern.glb` |
 | Chukaman Steamer | Quaternius (Issue #6 Poly Pizza entry `40XM5hLr4Y`) | CC0 1.0 | `poly/steamer.glb` |
+| Scooter (e-bike) | [Poly by Google](https://poly.pizza/m/fPLXByG4Vx5) | CC-BY 3.0 | `poly/ebike.glb` |
+| Pan Wok | [MilkAndBanana](https://poly.pizza/m/3rvYMi6EF1) | CC0 1.0 | `poly/wok.glb` |
 
-**Attribution (CC-BY 3.0):** “red lantern” by Sophie Kim
-(https://poly.pizza/m/7PZhxLFiGc2) / CC-BY 3.0.
+**Attribution (CC-BY 3.0):**
 
-### Still blocked from this environment
+- “red lantern” by Sophie Kim (https://poly.pizza/m/7PZhxLFiGc2) / CC-BY 3.0.
+- “Scooter” by Poly by Google (https://poly.pizza/m/fPLXByG4Vx5) / CC-BY 3.0.
 
-Cloudflare Turnstile on `poly.pizza` / `static.poly.pizza` refused curl,
-Playwright, and Wayback for:
-
-- E-bike — https://poly.pizza/m/fPLXByG4Vx5 (“Scooter” by Poly by Google, CC-BY 3.0)
-- Wok — https://poly.pizza/m/3rvYMi6EF1 (“Pan Wok” by MilkAndBanana, CC0)
-
-Stand-ins until those GLBs can be dropped into `public/assets/poly/`:
-procedural e-bike mesh (`props.ts`) and Kenney Food Kit `pot-lid.glb` for the
-stew pot / wok bucket. Dropping `ebike.glb` / `wok.glb` into `poly/` is enough
-to wire them later.
+“Pan Wok” by MilkAndBanana (https://poly.pizza/m/3rvYMi6EF1) is CC0 1.0
+(no attribution required; noted here for provenance).
 
 ## Kenney licence
 

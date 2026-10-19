@@ -51,9 +51,10 @@ export const INTERIOR_KIT: Record<string, KitPiece> = {
   'stool-high': { url: `${FURN}/stoolBar.glb`, width: 0.32, depth: 0.32, height: 0.75 },
   counter: { url: `${FURN}/kitchenCabinet.glb`, width: 0.7, depth: 2.4 },
   grill: { url: `${FURN}/kitchenStove.glb`, width: 0.7, depth: 1.1 },
-  // Food / market / Poly Pizza steamer (Quaternius CC0 mirror of the Issue #6 asset).
+  // Food / market / Poly Pizza steamer + wok (Issue #6).
   steamer: { url: `${POLY}/steamer.glb`, width: 0.5, depth: 0.5 },
-  pot: { url: `${FOOD}/pot-lid.glb`, width: 0.4, depth: 0.4 },
+  // Pan Wok (MilkAndBanana, CC0) — stretch Y to stew-pot collider height.
+  pot: { url: `${POLY}/wok.glb`, width: 0.5, depth: 0.5, height: 0.55 },
   case: { url: `${MARKET}/freezers-standing.glb`, width: 0.52, depth: 1.2 },
   cup: { url: `${FOOD}/cup.glb`, width: 0.1, depth: 0.1 },
   bowl: { url: `${FOOD}/bowl-broth.glb`, width: 0.17, depth: 0.17 },

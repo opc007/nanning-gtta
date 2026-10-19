@@ -33,6 +33,7 @@ import { lerp, angleLerp, angleDelta, starsFromHeat, daylightFactor } from './co
 import { Radio } from './audio/Radio';
 import { Sfx } from './audio/Sfx';
 import { toMph, type VehicleInput } from './vehicles/VehicleModel';
+import { preloadPolyEbike } from './render/polyProps';
 
 /** Touch UI + lower quality on coarse-pointer devices; `?touch=1|0` forces it. */
 function isTouchDevice(): boolean {
@@ -261,6 +262,8 @@ const debris = new Debris(env.scene, world);
 // On the food street the only cars are the background lanes past the barriers.
 // `?stream=1` keeps the upstream world with no ambient traffic (unchanged).
 const trafficCount = streaming ? 0 : nanning ? 8 : touch ? 24 : 40;
+// Poly Pizza scooter must be ready before Vehicles builds the player 电瓶车.
+await preloadPolyEbike();
 const vehicles = new Vehicles(env.scene, city, world, debris, trafficCount);
 // Nanning's Crowd already places Kenney Mini Characters on the carriageway.
 // Spawning the upstream capsule peds on top of that left blue/green box people
