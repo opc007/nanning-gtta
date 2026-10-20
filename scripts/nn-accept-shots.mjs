@@ -268,39 +268,116 @@ async function waitPolyEbikes() {
 async function shootFujiDoor() {
   console.log('fuji door');
   await goto('t=0.45&hud=0');
-  await waitPolyEbikes();
+  const nBikes = await waitPolyEbikes();
+  console.log('  poly ebikes:', nBikes);
   const fuji = await shopUnit('fuji');
   if (!fuji) return;
+  // Carriageway so kerb scooters sit between camera and fascia.
   await page.evaluate((f) => {
-    window.__game.teleport(f.x + f.nx * 5.5, f.z, Math.atan2(-f.nz, -f.nx));
+    window.__game.teleport(0, f.z, Math.atan2(-f.nz, -f.nx));
   }, fuji);
   await page.waitForTimeout(1800);
   await page.evaluate((f) => {
     const n = window.__nn;
-    // Slightly wider frame so kerb scooters stay in shot with the fascia.
-    n.camera.position.set(f.x + f.nx * 9.0, 2.6, f.z + 1.8);
-    n.camera.lookAt(f.x + f.nx * 0.3, 1.4, f.z);
+    globalThis.__hideAvatar = true;
+    n.camera.position.set(f.nx * 0.35, 2.15, f.z + 3.4);
+    n.camera.lookAt(f.x + f.nx * 0.2, 1.35, f.z);
     globalThis.freezeCam = true;
   }, fuji);
   await page.waitForTimeout(600);
   await shot('fuji-door');
+  await page.evaluate(() => {
+    globalThis.__hideAvatar = false;
+  });
+}
+
+/** Fenjiao room framed on the counter steamer + wok (not the dining aisle). */
+async function shootFenjiaoWok() {
+  console.log('fenjiao wok');
+  const unit = await shopUnit('zhongshan-fenjiao');
+  if (!unit) throw new Error('zhongshan-fenjiao missing');
+  await page.evaluate((u) => {
+    window.__game.teleport(u.x + u.nx * 0.8, u.z, Math.atan2(-u.nz, -u.nx));
+  }, unit);
+  for (let k = 0; k < 8; k++) await page.waitForTimeout(120);
+  await page.evaluate((u) => {
+    window.__game.teleport(u.x - u.nx * 2.8, u.z, Math.atan2(-u.nz, -u.nx));
+  }, unit);
+
+  let aim = null;
+  for (let attempt = 0; attempt < 45; attempt++) {
+    await page.waitForTimeout(160);
+    aim = await page.evaluate((u) => {
+      if (!window.__game?.interior) return null;
+      const props = (window.__game?.interiorProps?.() ?? []).filter(
+        (p) => p.x > u.minX && p.x < u.maxX && p.z > u.minZ && p.z < u.maxZ,
+      );
+      const pot = props.find((p) => p.prop === 'pot');
+      const steamer = props.find((p) => p.prop === 'steamer');
+      const target = pot ?? steamer;
+      if (!target) return null;
+      return {
+        pot: !!pot,
+        steamer: !!steamer,
+        aim: { x: target.x, y: 0.85, z: target.z },
+        eye: {
+          x: target.x + u.nx * 2.4,
+          y: 1.65,
+          z: target.z + (u.nz === 0 ? 1.6 : 0),
+        },
+        stand: { x: (u.minX + u.maxX) / 2, z: (u.minZ + u.maxZ) / 2 },
+      };
+    }, unit);
+    if (aim) break;
+  }
+  if (!aim) throw new Error('fenjiao: pot/steamer never streamed');
+  console.log('  ', aim);
+
+  await page.evaluate(([f]) => {
+    const n = window.__nn;
+    globalThis.__hideAvatar = true;
+    window.__game.teleport(f.stand.x, f.stand.z, 0);
+    n.camera.near = 0.1;
+    n.camera.fov = 55;
+    n.camera.position.set(f.eye.x, f.eye.y, f.eye.z);
+    n.camera.lookAt(f.aim.x, f.aim.y, f.aim.z);
+    n.camera.updateProjectionMatrix();
+    n.camera.updateMatrixWorld(true);
+    globalThis.freezeCam = true;
+  }, [aim]);
+  await page.waitForTimeout(700);
+  const path = join(OUT, 'accept-interior-fenjiao.png');
+  await page.screenshot({ path, timeout: 180000 });
+  assertRealShot(path);
+  const lit = litFraction(path);
+  if (lit < 0.35) throw new Error(`${path} too dark (lit=${lit})`);
+  if (MEDIA) copyFileSync(path, join(MEDIA, 'accept-interior-fenjiao.png'));
+  console.log('  → interior-fenjiao', path, `${(statSync(path).size / 1024) | 0}KB`, `lit=${lit.toFixed(2)}`);
+  await page.evaluate(() => {
+    globalThis.__hideAvatar = false;
+  });
 }
 
 async function shootNightStreet() {
   console.log('night');
   await goto('t=0.82&hud=0');
   await waitPolyEbikes();
+  // Mid-street where spaced kerb scooters land (~ STREET_Z0+25+45k).
   await page.evaluate(() => window.__game.teleport(0, -35, Math.PI / 2));
   await page.waitForTimeout(2500);
   await page.evaluate(() => {
     const n = window.__nn;
-    const pl = n.player;
-    n.camera.position.set(pl.x - 0.5, 2.6, pl.z + 10);
-    n.camera.lookAt(pl.x + 2.5, 2.0, pl.z - 6);
+    globalThis.__hideAvatar = true;
+    // Look down the street with the west kerb (scooters) in the left third.
+    n.camera.position.set(1.2, 2.4, -28);
+    n.camera.lookAt(-2.5, 1.1, -50);
     globalThis.freezeCam = true;
   });
   await page.waitForTimeout(800);
   await shot('night-street');
+  await page.evaluate(() => {
+    globalThis.__hideAvatar = false;
+  });
 }
 
 // ── Optional: hero / door / night (skipped when ONLY=interiors|poly) ─────────
@@ -350,17 +427,18 @@ if (ONLY === 'all' || ONLY === 'interiors' || ONLY === 'poly') {
   // Give the Kenney furniture kit a moment after boot before entering rooms.
   await page.waitForTimeout(2500);
 
-  const shops =
-    ONLY === 'poly'
-      ? [['zhongshan-fenjiao', 'fenjiao']]
-      : [
-          ['fuji', 'laoyou'],
-          ['zhongshan-fenjiao', 'fenjiao'],
-          ['rongji', 'bbq'],
-          ['hengzhou', 'milktea'],
-        ];
-  for (const [id, name] of shops) {
-    await shootInterior(id, name);
+  if (ONLY === 'poly') {
+    await shootFenjiaoWok();
+  } else {
+    const shops = [
+      ['fuji', 'laoyou'],
+      ['zhongshan-fenjiao', 'fenjiao'],
+      ['rongji', 'bbq'],
+      ['hengzhou', 'milktea'],
+    ];
+    for (const [id, name] of shops) {
+      await shootInterior(id, name);
+    }
   }
 }
 

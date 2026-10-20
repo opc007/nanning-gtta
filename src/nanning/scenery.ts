@@ -541,20 +541,30 @@ async function mountPolyLanterns(scene: THREE.Scene, city: NanningCity): Promise
 }
 
 /**
- * Poly Pizza scooters parked at the kerb in front of the warm shops (CC-BY).
- * Parallel to the street so fuji-door / night stills pick them up.
+ * Poly Pizza scooters parked at the kerb (CC-BY). Warm-shop pairs plus a
+ * spaced kerb run so fuji-door and night-street stills both catch them.
  */
 async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<void> {
   const WARM = new Set(['fuji', 'zhongshan-fenjiao', 'rongji', 'hengzhou']);
   const spots: { x: number; z: number; heading: number }[] = [];
   for (const unit of city.shops) {
     if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
-    // Kerb just inside the carriageway, a step in front of the arcade.
-    const x = unit.nx * (STREET_HALF - 0.75);
+    // Kerb on the same side as the shop (nx points from shop into the street,
+    // so -nx * STREET_HALF is the near kerb).
+    const x = -unit.nx * (STREET_HALF - 0.75);
     // Parked along +Z; flip 180° on the west kerb so noses face the same way.
-    const heading = unit.nx > 0 ? Math.PI / 2 : -Math.PI / 2;
+    const heading = unit.nx < 0 ? Math.PI / 2 : -Math.PI / 2;
     spots.push({ x, z: unit.z - 1.1, heading });
     spots.push({ x, z: unit.z + 1.1, heading });
+  }
+  // Extra pairs along both kerbs so mid-street night framing is not empty.
+  for (const side of [-1, 1] as const) {
+    const x = side * (STREET_HALF - 0.75);
+    const heading = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+    for (let z = STREET_Z0 + 25; z < STREET_Z1 - 25; z += 45) {
+      spots.push({ x, z: z - 0.9, heading });
+      spots.push({ x, z: z + 0.9, heading });
+    }
   }
   await addPolyEbikes(scene, spots);
 }

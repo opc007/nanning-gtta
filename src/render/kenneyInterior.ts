@@ -108,6 +108,25 @@ export interface KitPart {
   vertexColors: boolean;
 }
 
+/** Copy interleaved attrs onto plain BufferAttributes so mergeGeometries works. */
+function deinterleave(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  for (const name of Object.keys(geo.attributes)) {
+    const attr = geo.attributes[name];
+    if (!(attr instanceof THREE.InterleavedBufferAttribute)) continue;
+    const n = attr.count;
+    const size = attr.itemSize;
+    const arr = new Float32Array(n * size);
+    for (let i = 0; i < n; i++) {
+      arr[i * size] = attr.getX(i);
+      if (size > 1) arr[i * size + 1] = attr.getY(i);
+      if (size > 2) arr[i * size + 2] = attr.getZ(i);
+      if (size > 3) arr[i * size + 3] = attr.getW(i);
+    }
+    geo.setAttribute(name, new THREE.BufferAttribute(arr, size));
+  }
+  return geo;
+}
+
 /**
  * Pack every mesh in a GLB into one geometry. Multi-part Furniture Kit pieces
  * (stool body + cushion, cabinet + doors) only read as furniture when all
@@ -140,7 +159,9 @@ function packMeshes(
       fallbackColor = hex;
       sawColor = true;
     }
-    const g = m.geometry.clone();
+    // Poly Pizza (and some Kenney) GLBs ship InterleavedBufferAttributes;
+    // mergeGeometries rejects those, so de-interleave before packing.
+    const g = deinterleave(m.geometry.clone());
     g.applyMatrix4(m.matrixWorld);
     for (const name of Object.keys(g.attributes)) {
       if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
