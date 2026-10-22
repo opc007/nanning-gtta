@@ -261,9 +261,14 @@ function addWarmExtras(list: LocalProp[], template: InteriorTemplate, depth: num
   addProp(list, 'lantern', 3.4, 0, false, hang);
   if (template === 'fenjiao') {
     const counterW = Math.min(3.2, width - 1.6);
-    // Second steamer stack + a stew pot on a burner beside the first.
+    // Second steamer stack + the wok, both standing on the counter run along
+    // the back wall. The wok used to sit 0.85 m in front of that line, which
+    // put it on the floor in the middle of the room — the acceptance shot read
+    // as a pan lying in the walkway rather than a pan on the stove.
     addProp(list, 'steamer', back, counterW * 0.45 + 0.95);
-    addProp(list, 'pot', back - 0.85, counterW * 0.45 + 0.45);
+    addProp(list, 'pot', back - counterW * 0.2, -0.4, false, {
+      y: 0.15 + 0.95, // counter top
+    });
     addProp(list, 'table-square', 4.35, -side * 0.6);
     stoolsAround(list, 4.35, -side * 0.6, -1);
   } else if (template === 'bbq') {
@@ -278,13 +283,17 @@ function addWarmExtras(list: LocalProp[], template: InteriorTemplate, depth: num
 }
 
 function colliderFor(prop: InteriorProp): Aabb3 {
+  // The box has to start where the prop actually is. A wok standing on a
+  // counter is not a hazard at floor level, and a table's top is at its own
+  // height above the floor lip, not at `h` above the world origin.
+  const base = prop.y ?? 0;
   return {
     minX: prop.x - prop.w / 2,
     maxX: prop.x + prop.w / 2,
     minZ: prop.z - prop.d / 2,
     maxZ: prop.z + prop.d / 2,
-    minY: 0,
-    maxY: prop.h,
+    minY: base,
+    maxY: base + prop.h,
     kind: 'walkable',
     camBlock: prop.h > 0.5,
     id: undefined,
@@ -330,16 +339,29 @@ export function buildInterior(shell: ShopShell): InteriorLayout {
       ) {
         continue;
       }
+      // Overlap is a volume, not a footprint. Two things may share the same
+      // patch of floor as long as one is stacked on the other — which is the
+      // whole point of putting a wok on a counter. Before this was 2D, any
+      // raised prop was silently dropped for colliding with whatever it sat
+      // on, so nothing could ever be put *on* anything.
+      const myBase = item.y ?? 0.15;
+      const myTop = myBase + item.h;
       const overlaps = props.some((other) => {
         if (other.hang) return false;
         const ow = other.w / 2;
         const od = other.d / 2;
-        return !(
+        const oBase = other.y ?? 0.15;
+        const oTop = oBase + other.h;
+        const planOverlap = !(
           box.maxX < other.x - ow + 0.02 ||
           box.minX > other.x + ow - 0.02 ||
           box.maxZ < other.z - od + 0.02 ||
           box.minZ > other.z + od - 0.02
         );
+        if (!planOverlap) return false;
+        // Touching counts as clear: a wok resting exactly on a counter top
+        // shares a plane, not a volume.
+        return myTop > oBase + 0.02 && myBase < oTop - 0.02;
       });
       if (overlaps) continue;
     }

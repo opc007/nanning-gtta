@@ -319,10 +319,13 @@ async function shootFenjiaoWok() {
       return {
         pot: !!pot,
         steamer: !!steamer,
-        aim: { x: target.x, y: 0.85, z: target.z },
+        // Aim at the middle of the thing, not at a hard-coded height: the wok
+        // stands on the counter now, and a fixed 0.85 pointed the lens at the
+        // cabinet face below it.
+        aim: { x: target.x, y: (target.y ?? 0.15) + (target.h ?? 0.5) / 2, z: target.z },
         eye: {
           x: target.x + u.nx * 2.4,
-          y: 1.65,
+          y: 1.9,
           z: target.z + (u.nz === 0 ? 1.6 : 0),
         },
         stand: { x: (u.minX + u.maxX) / 2, z: (u.minZ + u.maxZ) / 2 },

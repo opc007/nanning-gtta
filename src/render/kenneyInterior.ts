@@ -33,6 +33,14 @@ export interface KitPiece {
    * independently of the XZ footprint fit.
    */
   height?: number;
+  /**
+   * Fit X and Z independently to the requested footprint instead of by one
+   * uniform factor. Only for pieces that are meant to run along a wall — a
+   * counter is a run of cabinets, and scaling it uniformly leaves it a third
+   * of the length its collider claims, which is how the wok ended up hovering
+   * beside a counter rather than on it.
+   */
+  stretch?: boolean;
 }
 
 const FURN = 'assets/kenney/furniture/Models/GLTF%20format';
@@ -49,8 +57,11 @@ export const INTERIOR_KIT: Record<string, KitPiece> = {
   'table-high': { url: `${FURN}/desk.glb`, width: 0.7, depth: 0.7, height: 1.05 },
   stool: { url: `${FURN}/stoolBarSquare.glb`, width: 0.34, depth: 0.34, height: 0.45 },
   'stool-high': { url: `${FURN}/stoolBar.glb`, width: 0.32, depth: 0.32, height: 0.75 },
-  counter: { url: `${FURN}/kitchenCabinet.glb`, width: 0.7, depth: 2.4 },
-  grill: { url: `${FURN}/kitchenStove.glb`, width: 0.7, depth: 1.1 },
+  // A counter is a run of cabinets along a wall, not a cube: stretch it to the
+  // footprint the layout collides against, and give it the collider's height so
+  // its top surface is where the collider says it is.
+  counter: { url: `${FURN}/kitchenCabinet.glb`, width: 0.7, depth: 2.4, height: 0.95, stretch: true },
+  grill: { url: `${FURN}/kitchenStove.glb`, width: 0.7, depth: 1.1, height: 0.9, stretch: true },
   // Food / market / Poly Pizza steamer + wok (Issue #6).
   steamer: { url: `${POLY}/steamer.glb`, width: 0.5, depth: 0.5 },
   // Pan Wok (MilkAndBanana, CC0) — stretch Y to stew-pot collider height.
@@ -74,6 +85,7 @@ function normalise(
   width: number,
   depth: number,
   height?: number,
+  stretch = false,
 ): THREE.BufferGeometry {
   const g = geo.clone();
   g.computeBoundingBox();
@@ -83,7 +95,13 @@ function normalise(
   const sz = bb.max.z - bb.min.z;
   const kFoot = Math.min(sx > 1e-4 ? width / sx : 1, sz > 1e-4 ? depth / sz : 1);
   const ky = height != null && sy > 1e-4 ? height / sy : kFoot;
-  g.scale(kFoot, ky, kFoot);
+  if (stretch) {
+    const kx = sx > 1e-4 ? width / sx : 1;
+    const kz = sz > 1e-4 ? depth / sz : 1;
+    g.scale(kx, ky, kz);
+  } else {
+    g.scale(kFoot, ky, kFoot);
+  }
   g.computeBoundingBox();
   const b2 = g.boundingBox!;
   g.translate(
@@ -219,7 +237,7 @@ export async function loadInteriorKit(): Promise<Map<string, KitPart>> {
         const packed = packMeshes(gltf.scene);
         if (packed) {
           out.set(id, {
-            geometry: normalise(packed.geo, piece.width, piece.depth, piece.height),
+            geometry: normalise(packed.geo, piece.width, piece.depth, piece.height, piece.stretch),
             map: packed.map,
             color: packed.color,
             vertexColors: packed.vertexColors,
