@@ -54,29 +54,37 @@ function loadNpc(file: string): Promise<NpcSource | null> {
   const hit = cache.get(file);
   if (hit) return hit;
   const p = new Promise<NpcSource | null>((resolve) => {
-    new GLTFLoader().load(
-      npcUrl(file),
-      (gltf) => {
-        const root = gltf.scene;
-        root.updateMatrixWorld(true);
-        const box = new THREE.Box3().setFromObject(root);
-        const k = NPC_HEIGHT / Math.max(box.max.y - box.min.y, 1e-4);
-        root.scale.setScalar(k);
-        // `setFromObject` runs after the scale is set, so the box minimum is
-        // already in world units — scaling it a second time lifts the figure
-        // off the pavement.
-        const after = new THREE.Box3().setFromObject(root);
-        root.position.y = -after.min.y;
-        root.updateMatrixWorld(true);
-        root.traverse((o) => {
-          o.castShadow = true;
-          o.receiveShadow = true;
-        });
-        resolve({ template: root, clips: gltf.animations });
-      },
-      undefined,
-      () => resolve(null),
-    );
+    // The loader can throw before it ever calls back — a URL it cannot parse,
+    // a missing fetch. That used to take the whole street down, because this
+    // runs from the Crowd constructor: a person who cannot be loaded is a
+    // person who is briefly absent, not a game that stops.
+    try {
+      new GLTFLoader().load(
+        npcUrl(file),
+        (gltf) => {
+          const root = gltf.scene;
+          root.updateMatrixWorld(true);
+          const box = new THREE.Box3().setFromObject(root);
+          const k = NPC_HEIGHT / Math.max(box.max.y - box.min.y, 1e-4);
+          root.scale.setScalar(k);
+          // `setFromObject` runs after the scale is set, so the box minimum is
+          // already in world units — scaling it a second time lifts the figure
+          // off the pavement.
+          const after = new THREE.Box3().setFromObject(root);
+          root.position.y = -after.min.y;
+          root.updateMatrixWorld(true);
+          root.traverse((o) => {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          });
+          resolve({ template: root, clips: gltf.animations });
+        },
+        undefined,
+        () => resolve(null),
+      );
+    } catch {
+      resolve(null);
+    }
   });
   cache.set(file, p);
   return p;

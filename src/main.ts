@@ -230,6 +230,16 @@ if (nanning) {
     onHeat: (amount) => {
       heat = Math.min(100, heat + amount);
     },
+    onEat: (heal) => {
+      if (heal <= 0) return;
+      const before = health;
+      health = Math.min(MAX_HEALTH, health + heal);
+      const got = Math.round(health - before);
+      if (got > 0) {
+        hitBanner = `食完返晒 ${got} 血`;
+        hitBannerT = 1.8;
+      }
+    },
     onPayout: (payout) => completeMission(payout),
     onBlip: () => sfx.footstep(),
   });

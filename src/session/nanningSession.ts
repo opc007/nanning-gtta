@@ -40,6 +40,8 @@ export interface NanningSessionOptions {
   onHeat: (amount: number) => void;
   onPayout: (payout: NanningPayout) => void;
   onBlip: () => void;
+  /** How much health a meal put back. A bowl of 粉饺 is what puts you together. */
+  onEat?: (heal: number) => void;
 }
 
 /** Below this a vehicle nudges the railing; above it, the bay comes down. */
@@ -339,6 +341,10 @@ export class NanningSession {
     this.opts.onBlip();
     if (ev.kind !== 'bought') return;
     this.hud.toast(this.shops.randomEatLine(), '#ffd24a');
+    // Half the satiety a meal fills you with comes back as health. Without
+    // this, health only ever went down: one bad fight was permanent, and
+    // there was nothing to spend money on that would ever help.
+    this.opts.onEat?.(Math.round((ev.fill ?? 0) * 0.5));
     const payout = this.missions.feed({
       kind: tagForShop(shop.unit.def.kind),
       shopKind: shop.unit.def.kind,

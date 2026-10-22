@@ -47,6 +47,8 @@ export interface Talker {
   vx: number;
   vz: number;
   vy: number;
+  /** Thrown rather than punched: keeps its speed, and knocks people over. */
+  thrown: boolean;
 }
 
 /**
@@ -74,6 +76,17 @@ const GRAVITY = 18;
 
 /** Draw a line of text into a rounded bubble sprite. */
 function makeBubble(): THREE.Sprite {
+  // No DOM — a test, a server render, an old browser. A speech bubble is a
+  // nicety; without a canvas there is nothing to draw on, and taking the
+  // whole street down over it is not a trade worth making.
+  if (typeof document === 'undefined') {
+    const mat = new THREE.SpriteMaterial({ transparent: true, depthTest: false, toneMapped: false });
+    const sp = new THREE.Sprite(mat);
+    sp.scale.set(3.2, 0.8, 1);
+    sp.renderOrder = 999;
+    sp.visible = false;
+    return sp;
+  }
   const cv = document.createElement('canvas');
   cv.width = 512;
   cv.height = 128;
@@ -219,7 +232,7 @@ export class Crowd {
     this.talkers.push({
       x, z, y: 0, group: g, bubble: b, line: '',
       hp: CROWD_HP, combat: 'none', timer: 0, swingCd: 0, fightT: 0,
-      panic: 0, hostile: false, vx: 0, vz: 0, vy: 0,
+      panic: 0, hostile: false, vx: 0, vz: 0, vy: 0, thrown: false,
       ...talker,
     });
     void this.npcs.spawn(file, 'idle').then((made) => {
@@ -312,6 +325,8 @@ export class Crowd {
         t.vx = dirX * power;
         t.vz = dirZ * power;
         t.vy = 2.5;
+        // A thrown body keeps its speed; a punched one is only shoved.
+        t.thrown = true;
         t.panic = CROWD_PANIC_TIME;
       } else {
         t.combat = 'none';
@@ -326,6 +341,32 @@ export class Crowd {
   /** Carrying someone? Movement is taxed and the fist is busy. */
   carrying(): boolean {
     return this.talkers.some((t) => t.combat === 'carried');
+  }
+
+  /**
+   * A body at speed knocks the others over. One body, one person — and the
+   * thrower bounces off, which is what makes it a throw and not a shove.
+   */
+  private knockIntoOthers(t: Talker): void {
+    for (const other of this.talkers) {
+      if (other === t) continue;
+      if (other.combat === 'carried' || other.combat === 'down') continue;
+      const d = Math.hypot(other.x - t.x, other.z - t.z);
+      if (d > 1.35) continue;
+      other.hp = CROWD_HP;
+      other.combat = 'down';
+      other.timer = CROWD_DOWN_TIME;
+      other.panic = CROWD_PANIC_TIME;
+      other.t = 0;
+      other.bubble.visible = false;
+      other.vx = t.vx * 0.35;
+      other.vz = t.vz * 0.35;
+      other.group.rotation.x = 0;
+      t.vx *= -0.3;
+      t.vz *= -0.3;
+      this.onFightStart?.();
+      return;
+    }
   }
 
   /**
@@ -390,12 +431,18 @@ export class Crowd {
       t.vy -= GRAVITY * dt;
       t.y += t.vy * dt;
       if (t.y <= 0) { t.y = 0; t.vy = 0; }
-      t.vx *= 1 - Math.min(1, dt * 3.5);
-      t.vz *= 1 - Math.min(1, dt * 3.5);
+      // A thrown body keeps its speed for a while; a shoved one stops dead.
+      const decay = t.thrown ? dt * 1.1 : dt * 3.5;
+      t.vx *= 1 - Math.min(1, decay);
+      t.vz *= 1 - Math.min(1, decay);
+      // A body at speed knocks the others over. Throwing someone into a knot
+      // of people is the oldest trick on the street.
+      if (t.thrown && Math.hypot(t.vx, t.vz) > 2) this.knockIntoOthers(t);
       t.group.position.set(t.x, t.y, t.z);
       t.group.rotation.x = -Math.min(1.15, t.timer * 1.6);
       if (t.timer <= 0) {
         t.group.rotation.x = 0;
+        t.thrown = false;
         // They get up angry. Punching a person and having them simply run
         // away is a pushover; on a real street they turn around.
         t.combat = 'fight';
