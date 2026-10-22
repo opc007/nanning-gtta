@@ -44,7 +44,7 @@ describe('中山路 layout', () => {
     const c = generateNanningCity(7);
     expect(sig(a)).toBe(sig(b));
     expect(sig(c)).toBe(sig(a));
-    expect(a.lanes.length).toBe(4);
+    expect(a.lanes.length).toBe(6); // two down 中山路, four on the back roads
     expect(c.lanes.length).toBe(a.lanes.length);
     expect(c.buildings.length).toBe(a.buildings.length);
   });
@@ -101,11 +101,29 @@ describe('中山路 layout', () => {
     expect(Math.hypot(blocked.x - backX, blocked.z - shop.z)).toBeGreaterThan(0.15);
   });
 
-  it('has no AI lanes or parked cars on the street', () => {
+  it('runs the traffic down the carriageway, and keeps it off the arcade', () => {
+    // This used to say the street had no traffic at all: 中山路 was a
+    // pedestrian street, and every car in the game was parked on a back road
+    // at the far end of the map. It made the street a corridor you could walk
+    // down without anything ever passing you. A nine-metre carriageway with
+    // a 骑楼 arcade on both sides fits two lanes, and the traffic is what
+    // makes it a street.
     expect(city.parkingSpots).toHaveLength(0);
     expect(city.lanes.length).toBeGreaterThan(0);
-    for (const lane of city.lanes) {
-      expect(lane.axis).toBe('x');
+
+    const street = city.lanes.filter((l) => l.axis === 'z');
+    expect(street.length).toBe(2);
+    for (const lane of street) {
+      // Inside the carriageway, clear of the columns at the kerb.
+      expect(Math.abs(lane.fixed)).toBeGreaterThan(1);
+      expect(Math.abs(lane.fixed)).toBeLessThan(3);
+      // It is an old street, not a boulevard: the cars creep.
+      expect(lane.cruise ?? 99).toBeLessThan(8);
+      // And they wrap inside the street rather than driving off the end.
+      expect(lane.span).toBeDefined();
+    }
+    // The back roads keep their traffic, and it is still out of the way.
+    for (const lane of city.lanes.filter((l) => l.axis === 'x')) {
       expect(Math.abs(lane.fixed)).toBeGreaterThan(150);
     }
     expect(Math.abs(city.carSpawn?.z ?? 0)).toBeGreaterThan(150);

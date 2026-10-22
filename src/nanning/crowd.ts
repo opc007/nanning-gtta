@@ -170,6 +170,9 @@ export class Crowd {
   onSwing?: (x: number, z: number, damage: number) => void;
   /** Called the first time a brawl starts, so the street can call the police. */
   onFightStart?: () => void;
+  /** How many people the traffic has run over. This is how the wanted level
+   *  gets started on a street where the only people are the crowd. */
+  runOvers = 0;
   private tick(dt: number): void {
     for (const m of this.mixers) m.update(Math.min(dt, 0.05));
   }
@@ -199,11 +202,13 @@ export class Crowd {
     // how a real pavement looks and what makes the crowd answer back.
     let placed = 0;
     while (placed < ambient) {
-      const anchorX = (placed % 2 === 0 ? -1 : 1) * (1.6 + rnd() * 2.2);
+      // People stand at the kerb, in front of the shops, not in the middle
+      // of the road: the middle is where the traffic goes.
+      const anchorX = (placed % 2 === 0 ? -1 : 1) * (3.5 + rnd() * 0.6);
       const anchorZ = -140 + (placed + 0.5) * (280 / Math.max(1, ambient));
       const knot = Math.min(ambient - placed, 2 + Math.floor(rnd() * 3));
       for (let k = 0; k < knot; k++) {
-        const jx = anchorX + (rnd() - 0.5) * 2.2;
+        const jx = anchorX + (rnd() - 0.5) * 0.7;
         const jz = anchorZ + (rnd() - 0.5) * 2.8;
         this.place(scene, jx, jz, NPC_POOL[Math.floor(rnd() * NPC_POOL.length)], rnd() * Math.PI * 2, {
           name: '', amount: 0, paid: true, t: rnd() * 8,
@@ -336,6 +341,36 @@ export class Crowd {
       return true;
     }
     return false;
+  }
+
+  /**
+   * A car hit them. They go down, and the street notices: running someone over
+   * is a crime, and the police should hear about it.
+   *
+   * The people on this street are the crowd, so before this the only
+   * population of pedestrians a car could hit was an empty one — the wanted
+   * level had no way to start from the road.
+   */
+  runOver(t: Talker, speed: number, nx = 0, nz = 0): boolean {
+    if (t.combat === 'carried') return false;
+    t.hp = CROWD_HP;
+    // A fast car carries them further down the road before they come to rest.
+    const push = Math.min(2.2, speed * 0.16);
+    t.x += nx * push;
+    t.z += nz * push;
+    t.combat = 'down';
+    t.timer = CROWD_DOWN_TIME;
+    t.panic = CROWD_PANIC_TIME;
+    t.t = 0;
+    t.bubble.visible = false;
+    t.vx = 0;
+    t.vz = 0;
+    t.vy = 0;
+    t.y = 0;
+    t.group.rotation.x = 0;
+    t.hostile = false;
+    this.runOvers++;
+    return true;
   }
 
   /** Carrying someone? Movement is taxed and the fist is busy. */

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 /**
  * Vehicle bodies built by lofting cross-sections.
  *
@@ -76,6 +77,10 @@ export function loft(sections: Section[], seg = 16, cap = true): THREE.BufferGeo
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  // A UV set, all zeros. The paint has no map so nothing reads it, but the
+  // primitives this body is merged with do have one, and a merge needs the
+  // attributes to line up.
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
@@ -202,30 +207,35 @@ export interface BodyMesh {
 /** One wheel: tyre, dished rim, five spokes, hub, brake disc. */
 function wheel(r: number, width: number): THREE.Group {
   const g = new THREE.Group();
-  const tyre = new THREE.Mesh(
-    new THREE.TorusGeometry(r * 0.78, r * 0.24, 8, 18),
-    new THREE.MeshStandardMaterial({ color: 0x131518, roughness: 0.95 }),
-  );
-  tyre.rotation.y = Math.PI / 2;
-  tyre.castShadow = true;
-  g.add(tyre);
+  const tyreMat = new THREE.MeshStandardMaterial({ color: 0x131518, roughness: 0.95 });
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0xa9adb2, roughness: 0.34, metalness: 0.82 });
+
+  // Nine meshes per wheel, four wheels per car, twenty cars on a street: that
+  // is most of a thousand draw calls for the traffic alone. The wheel is
+  // merged down to two — the tyre, and everything metal on it.
+  const tyreGeo = new THREE.TorusGeometry(r * 0.78, r * 0.24, 8, 18);
+  tyreGeo.rotateY(Math.PI / 2);
+
   const rimGeo = new THREE.CylinderGeometry(r * 0.56, r * 0.56, width * 0.8, 12);
   rimGeo.rotateZ(Math.PI / 2);
-  const rimMat = new THREE.MeshStandardMaterial({ color: 0xa9adb2, roughness: 0.34, metalness: 0.82 });
-  g.add(new THREE.Mesh(rimGeo, rimMat));
-  const spokeGeo = new THREE.BoxGeometry(width * 0.5, r * 1.02, 0.028);
+  const hubGeo = new THREE.CylinderGeometry(r * 0.17, r * 0.17, width * 0.9, 8);
+  hubGeo.rotateZ(Math.PI / 2);
+  const discGeo = new THREE.CylinderGeometry(r * 0.44, r * 0.44, 0.02, 12);
+  discGeo.rotateZ(Math.PI / 2);
+  discGeo.translate(width * 0.2, 0, 0);
+  const metal: THREE.BufferGeometry[] = [rimGeo, hubGeo, discGeo];
   for (let k = 0; k < 5; k++) {
-    const s = new THREE.Mesh(spokeGeo, rimMat);
-    s.rotation.x = (k / 5) * Math.PI;
-    g.add(s);
+    const spoke = new THREE.BoxGeometry(width * 0.5, r * 1.02, 0.028);
+    spoke.rotateX((k / 5) * Math.PI);
+    metal.push(spoke);
   }
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.17, r * 0.17, width * 0.9, 8), rimMat);
-  hub.rotation.z = Math.PI / 2;
-  g.add(hub);
-  const disc = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.44, r * 0.44, 0.02, 12), new THREE.MeshStandardMaterial({ color: 0x6a6d72, roughness: 0.5, metalness: 0.7 }));
-  disc.rotation.z = Math.PI / 2;
-  disc.position.x = width * 0.2;
-  g.add(disc);
+
+  const tyre = new THREE.Mesh(tyreGeo, tyreMat);
+  tyre.castShadow = true;
+  g.add(tyre);
+  const rim = new THREE.Mesh(mergeGeometries(metal, false) ?? rimGeo, rimMat);
+  rim.castShadow = true;
+  g.add(rim);
   return g;
 }
 
@@ -238,58 +248,72 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   const group = new THREE.Group();
   const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.55 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x10161c, roughness: 0.06, metalness: 0.85 });
+  const headMat = new THREE.MeshStandardMaterial({ color: 0xfff3d6, emissive: 0xffe6b0, emissiveIntensity: 2.4 });
+  const tailMat = new THREE.MeshStandardMaterial({ color: 0x4a0d10, emissive: 0xff2020, emissiveIntensity: 1.8 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.3, metalness: 0.85 });
+  const darkBump = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.6 });
+  const grilleMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.5, metalness: 0.4 });
 
-  const bodyGeo = loft(S.body, 18);
-  const body = new THREE.Mesh(bodyGeo, paint);
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
+  // One mesh per material. A car used to be fifty separate little meshes —
+  // nine of them per wheel — and a street with traffic in it is twenty cars,
+  // which was most of a thousand draw calls spent on the traffic alone.
+  const buckets = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const put = (geo: THREE.BufferGeometry, mat: THREE.Material, m?: THREE.Matrix4): void => {
+    if (m) geo.applyMatrix4(m);
+    const list = buckets.get(mat);
+    if (list) list.push(geo);
+    else buckets.set(mat, [geo]);
+  };
+  const xf = (
+    x: number, y: number, z: number,
+    sx = 1, sy = 1, sz = 1,
+    rx = 0, ry = 0, rz = 0,
+  ): THREE.Matrix4 => new THREE.Matrix4().compose(
+    new THREE.Vector3(x, y, z),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)),
+    new THREE.Vector3(sx, sy, sz),
+  );
 
-  const cabin = new THREE.Mesh(loft(S.cabin, 16), glass);
-  cabin.castShadow = true;
-  group.add(cabin);
+  put(loft(S.body, 18), paint);
+  put(loft(S.cabin, 16), glass);
 
   // Pillars: thin body-coloured bars across the glasshouse, so the cabin reads
   // as a cabin and not a smoked bubble.
-  const pillarMat = paint;
   for (const [z, w] of [[0.3, 0.76], [-0.75, 0.84], [-1.5, 0.7]] as const) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.46, w * 2), pillarMat);
-    bar.position.set(0, 1.05, z);
-    group.add(bar);
+    put(new THREE.BoxGeometry(0.07, 0.46, w * 2), paint, xf(0, 1.05, z));
   }
   // Roof panel
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.07, 1.5), pillarMat);
-  roof.position.set(0, 1.24, -0.55);
-  group.add(roof);
+  put(new THREE.BoxGeometry(1.42, 0.07, 1.5), paint, xf(0, 1.24, -0.55));
 
-  // Lights
-  const headMat = new THREE.MeshStandardMaterial({ color: 0xfff3d6, emissive: 0xffe6b0, emissiveIntensity: 2.4 });
-  const tailMat = new THREE.MeshStandardMaterial({ color: 0x4a0d10, emissive: 0xff2020, emissiveIntensity: 1.8 });
+  // Lights, and the wing mirrors.
   for (const sx of [-1, 1]) {
-    const hl = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), headMat);
-    hl.scale.set(0.5, 0.62, 1.15);
-    hl.position.set(sx * 0.46, 0.55, S.frontZ - 0.08);
-    group.add(hl);
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.07), tailMat);
-    tl.position.set(sx * 0.5, 0.6, S.rearZ + 0.06);
-    group.add(tl);
-    // Wing mirror
-    const mir = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.06), pillarMat);
-    mir.position.set(sx * 0.9, 0.98, 0.3);
-    group.add(mir);
+    put(new THREE.SphereGeometry(0.11, 10, 8), headMat, xf(sx * 0.46, 0.55, S.frontZ - 0.08, 0.5, 0.62, 1.15));
+    put(new THREE.BoxGeometry(0.34, 0.1, 0.07), tailMat, xf(sx * 0.5, 0.6, S.rearZ + 0.06));
+    put(new THREE.BoxGeometry(0.16, 0.08, 0.06), paint, xf(sx * 0.9, 0.98, 0.3));
   }
   // Bumpers — chrome front, dark rear. Two horizontal bands is all it takes.
-  const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.3, metalness: 0.85 });
-  const fb = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 0.14), chrome);
-  fb.position.set(0, 0.36, S.frontZ - 0.02);
-  group.add(fb);
-  const rb = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.14, 0.12), new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.6 }));
-  rb.position.set(0, 0.38, S.rearZ + 0.02);
-  group.add(rb);
+  put(new THREE.BoxGeometry(1.5, 0.12, 0.14), chrome, xf(0, 0.36, S.frontZ - 0.02));
+  put(new THREE.BoxGeometry(1.5, 0.12, 0.12), darkBump, xf(0, 0.38, S.rearZ + 0.02));
   // Grille
-  const grille = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.18, 0.08), new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.5, metalness: 0.4 }));
-  grille.position.set(0, 0.6, S.frontZ - 0.04);
-  group.add(grille);
+  put(new THREE.BoxGeometry(1.1, 0.18, 0.08), grilleMat, xf(0, 0.6, S.frontZ - 0.04));
+
+  for (const [mat, geos] of buckets) {
+    const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+    if (!merged) {
+      // A merge that does not line up is not a reason to lose the car.
+      for (const geo of geos) {
+        const m = new THREE.Mesh(geo, mat);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        group.add(m);
+      }
+      continue;
+    }
+    const m = new THREE.Mesh(merged, mat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+  }
 
   // Wheels
   const steerWheels: THREE.Object3D[] = [];
@@ -303,5 +327,15 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   }
 
   group.scale.setScalar(S.scale);
-  return { group, steerWheels };
+
+  // The sections are lofted along Z, so the finished body points down +Z. But
+  // everything in this game faces +X at heading 0 — the heading convention
+  // every vehicle in the codebase uses, and the one the Poly scooter is
+  // already normalised to. Without this turn the bodies were rendered a
+  // quarter turn out: cars drove along the street sideways, which is why
+  // nobody noticed, because until now the street had no cars on it.
+  const outer = new THREE.Group();
+  group.rotation.y = Math.PI / 2;
+  outer.add(group);
+  return { group: outer, steerWheels };
 }

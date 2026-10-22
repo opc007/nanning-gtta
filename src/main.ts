@@ -201,6 +201,7 @@ if (heroFill) env.scene.add(heroFill);
   // about "the people on the street" needs it.
   get session() { return session ?? null; },
   get crowd() { return session?.crowd ?? null; },
+  get vehicles() { return vehicles ?? null; },
 };
 
 // Sfx is constructed here so the street session can blip on a purchase. The
@@ -294,7 +295,10 @@ const debris = new Debris(env.scene, world);
 // a follow-up (Phase C). The player car still spawns at the origin intersection.
 // On the food street the only cars are the background lanes past the barriers.
 // `?stream=1` keeps the upstream world with no ambient traffic (unchanged).
-const trafficCount = streaming ? 0 : nanning ? 8 : touch ? 24 : 40;
+// The Nanning street is 300 m of nine-metre carriageway. Eight cars meant one
+// every forty metres, which is not traffic. Twenty, weighted towards the two
+// lanes down 中山路, is a street with cars on it.
+const trafficCount = streaming ? 0 : nanning ? 20 : touch ? 24 : 40;
 // Poly Pizza scooter must be ready before Vehicles builds the player 电瓶车.
 await preloadPolyEbike();
 const vehicles = new Vehicles(env.scene, city, world, debris, trafficCount);
@@ -417,10 +421,17 @@ if (!HUD_ON) {
 }
 
 let mode: Mode = nanning ? 'foot' : 'driving';
+// Where a person stands on a street with traffic in it: at the kerb, just
+// inside the carriageway, clear of the lane the cars use.
+const KERB_X = 3.3;
+
 // The first car is spawned as the player's. On the food street you start on
 // foot beside it, so it has to be enterable (nearest() ignores playerIndex).
 if (mode === 'foot') vehicles.exit();
-player.x = city.center.x;
+// On the kerb, not in the road. The carriageway of 中山路 is nine metres wide
+// and there is traffic in it now; starting in the middle of it meant being
+// run over before the game had finished loading.
+player.x = nanning ? KERB_X : city.center.x;
 player.z = city.center.z;
 // Face south, down the street toward the night market. Forward is (cos h, -sin h).
 if (nanning) player.heading = -Math.PI / 2;
@@ -660,7 +671,8 @@ function respawn(): void {
   sinceUnseen = 0;
   wantedCooling = false;
   mode = 'foot';
-  player.teleport(city.center.x, city.center.z + 6, nanning ? -Math.PI / 2 : 0);
+  // Back on the kerb for the same reason you start there.
+  player.teleport(nanning ? KERB_X : city.center.x, city.center.z + 6, nanning ? -Math.PI / 2 : 0);
   follow.snapBehind(player.heading, player.x, player.z, 0, STREET_CAM);
 }
 
@@ -701,11 +713,15 @@ function chaseTarget(): { x: number; z: number; vx: number; vz: number } {
  */
 function updateWanted(dt: number): void {
   const over = peds.runOverCount;
+  // The people on this street are the crowd, so they are the ones the traffic
+  // can run over — and running someone over is how a wanted level starts.
+  const crowdOver = session?.crowd.runOvers ?? 0;
+  const total = over + crowdOver;
   const t = chaseTarget();
   const seen = stars > 0 && vehicles.anyPoliceSeesTarget(t.x, t.z, city.colliders);
-  if (over > prevRunOver) {
+  if (total > prevRunOver) {
     sfx.gib();
-    heat = Math.min(100, heat + (over - prevRunOver) * CRIME_HEAT);
+    heat = Math.min(100, heat + (total - prevRunOver) * CRIME_HEAT);
     sinceUnseen = 0;
   } else if (seen) {
     sinceUnseen = 0; // they have eyes on you — wanted holds
@@ -713,13 +729,29 @@ function updateWanted(dt: number): void {
     sinceUnseen += dt;
     if (sinceUnseen > HEAT_GRACE) heat = Math.max(0, heat - HEAT_DECAY * dt);
   }
-  prevRunOver = over;
+  prevRunOver = total;
   wantedCooling = stars > 0 && !seen && sinceUnseen > HEAT_GRACE;
   stars = starsFromHeat(heat);
   vehicles.setWanted(stars, t, city);
 }
 
 /** While on foot, take damage from cars that hit us; trigger WASTED at zero. */
+/**
+ * Cars run people over. The people on this street are the crowd, so this is
+ * where a hit-and-run gets noticed — and where the wanted level comes from.
+ * Without it, driving over somebody on 中山路 did nothing at all.
+ */
+function checkCrowdRunOver(): void {
+  const crowd = session?.crowd;
+  if (!crowd) return;
+  for (const t of crowd.talkers) {
+    if (t.combat === 'carried' || t.combat === 'down') continue;
+    const hit = vehicles.pedestrianImpact(t.x, t.z, true, false);
+    if (!hit || hit.speed <= HIT_SPEED) continue;
+    crowd.runOver(t, hit.speed, hit.nx, hit.nz);
+  }
+}
+
 function checkPedestrianDamage(): void {
   // Exclude police: a cop catching you on foot triggers BUSTED (arrest), it
   // doesn't run you over. Ordinary traffic can still flatten you.
@@ -790,6 +822,9 @@ function update(dt: number): void {
 
   updateWanted(dt);
   const chase = stars > 0 ? chaseTarget() : null;
+
+  // A car runs people over whether you are driving it or watching it happen.
+  checkCrowdRunOver();
 
   if (mode === 'driving') {
     if (controls.resetPressed()) vehicles.resetPlayer(city);
@@ -1049,7 +1084,7 @@ function render(alpha: number, frameDt: number): void {
   // The health bar reads car integrity while driving, avatar health on foot.
   const shownHealth = mode === 'driving' ? vehicles.playerCarHealth() : health;
   if (HUD_ON) hud.update(speedMph, mode, active, vehicles.positions(), shownHealth, wasted);
-  if (HUD_ON) hud.setRunOverCount(peds.runOverCount);
+  if (HUD_ON) hud.setRunOverCount(peds.runOverCount + (session?.crowd.runOvers ?? 0));
   if (HUD_ON) hud.setCarName(mode === 'driving' ? vehicles.playerCarName() : null);
   // Radio readout is a dashboard thing — only show it while driving (the audio
   // itself still fades out with distance as you walk away).

@@ -429,9 +429,27 @@ export function generateNanningCity(seed = 1945): NanningCity {
     streetlights.push({ x: STREET_HALF - 0.3, z });
   }
 
-  // ── Background lanes ONLY. No lane runs down 中山路. ─────────────────────
+  // ── Lanes. ───────────────────────────────────────────────────────────────
   // Local roads — never push onto a shared module array.
+  //
+  // 中山路 gets two lanes down the middle of its nine-metre carriageway. The
+  // old street was shared space — people on the kerb, bikes in the middle, a
+  // car now and then — and the traffic is what makes it a street rather than
+  // a corridor you can walk down without anything ever passing you.
+  //
+  // The cars creep (20 km/h), because it is a nine-metre street with a 骑楼
+  // arcade on both sides, not a boulevard. They watch a narrow corridor for
+  // people: on this street a car should brake for someone stepping into the
+  // road, not for everyone standing in front of a shop.
   const lanes: Lane[] = [
+    {
+      axis: 'z', fixed: -1.9, dir: 1,
+      span: [STREET_Z0 + 8, STREET_Z1 - 8], watch: 1.1, cruise: 5.4, weight: 4,
+    },
+    {
+      axis: 'z', fixed: 1.9, dir: -1,
+      span: [STREET_Z0 + 8, STREET_Z1 - 8], watch: 1.1, cruise: 5.4, weight: 4,
+    },
     { axis: 'x', fixed: MINZU_Z - 3.2, dir: 1 },
     { axis: 'x', fixed: MINZU_Z + 3.2, dir: -1 },
     { axis: 'x', fixed: TAOYUAN_Z - 3.2, dir: 1 },
