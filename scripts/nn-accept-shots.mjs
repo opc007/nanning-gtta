@@ -403,35 +403,48 @@ if (ONLY === 'all' || ONLY === 'hero') {
   await faceCam(2.7, 1.45, 1.0);
   await shot('hero-run');
 
-  await poseClip('jump', 0.3);
-  // A real jump, caught near the top. Setting the avatar's height by hand does
-  // not survive the frame — the physics owns that position — and a staged
-  // float would be a picture of a jump rather than a jump. So: launch him,
-  // then watch the height and fire when he is actually up there. The sandbox
-  // runs at a fraction of a frame per second, which makes the apex last
-  // long enough to catch rather than making it impossible to catch.
-  // Trigger the jump the way the game does it. The controller jumps when its
-  // input buffer is filled and it is allowed to, and it applies its own takeoff
-  // speed, gravity, coyote time and stamina cost — so this is the same jump
-  // Space produces, caught mid-flight. Writing `vy` by hand did nothing at all:
-  // `Player.vy` is a read-only getter over the sim, so the assignment was
-  // silently discarded and the height never left the floor.
-  await page.evaluate(() => {
-    const sim = window.__nn.player.sim;
-    sim.jumpBuffer = 0.2;
-    sim.grounded = true;
-    sim.coyote = 0.2;
-    sim.landTimer = 0;
-  });
+  // The pose and the height are two separate problems, and they have to be
+  // solved in that order.
+  //
+  // The pose is easy: the pack has a `jump` clip and the mixer can be held at
+  // an absolute time, so `poseClip` freezes him mid-flight however high he is.
+  //
+  // The height is not: the physics owns that position and puts him back on the
+  // ground every step, so it has to be a real jump. Hold Space, watch the
+  // height, and catch him actually up there. Only then does the pose get
+  // applied — holding the mixer at a time means the pose is the same whenever
+  // it is set.
+  //
+  // The catch happens at a small window. A frame at 1280x720 takes four seconds
+  // under a software renderer and the apex is a sliver of time; at 640x400 the
+  // same page runs several times faster and the jump can be caught at all. The
+  // window goes back to full size afterwards and the still is taken there —
+  // the renderer follows the resize, and the simulation is frozen so the
+  // height he was caught at is the height he is photographed at.
+  await page.setViewportSize({ width: 640, height: 400 });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => window.__game.teleport(0, -20, 0));
+  await page.waitForTimeout(2500);
+  await page.keyboard.down('Space');
   let apex = 0;
-  for (let i = 0; i < 200; i++) {
-    await page.waitForTimeout(400);
-    const y = await page.evaluate(() => window.__nn.player.y);
-    if (y > 0.75) { apex = y; break; }
+  for (let i = 0; i < 60; i++) {
+    await page.waitForTimeout(700);
+    const y = await page.evaluate(() => window.__nn.player.sim.y);
+    if (y > 0.45) { apex = y; break; }
   }
+  await page.keyboard.up('Space');
   console.log('  jump apex height:', apex.toFixed(2));
-  await faceCam(2.9, 1.85, 1.4 + apex * 0.5);
-  await shot('hero-jump');
+  if (apex <= 0) {
+    console.log('  jump apex NOT caught — skipping hero-jump rather than filing a wrong still');
+  } else {
+    await page.evaluate(() => window.__game.freeze(true));
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.waitForTimeout(2500);
+    await poseClip('jump', 0.3);
+    await faceCam(3.7, 1.95, 1.45);
+    await shot('hero-jump');
+    await page.evaluate(() => window.__game.freeze(false));
+  }
 
   await poseClip('attack-melee-right', 0.4);
   await page.evaluate(() => {
