@@ -1037,11 +1037,10 @@ function render(alpha: number, frameDt: number): void {
 
   // Perf telemetry (watched in the smoke run; see performance-vigilance memory).
   if (frameDt > 0) perf.frameMs = perf.frameMs === 0 ? frameDt * 1000 : perf.frameMs * 0.9 + frameDt * 1000 * 0.1;
-  const info = env.renderer.info;
-  perf.drawCalls = info.render.calls;
-  perf.triangles = info.render.triangles;
-  perf.geometries = info.memory.geometries;
-  perf.textures = info.memory.textures;
+  perf.drawCalls = env.frameStats.calls;
+  perf.triangles = env.frameStats.triangles;
+  perf.geometries = env.renderer.info.memory.geometries;
+  perf.textures = env.renderer.info.memory.textures;
 }
 
 interface Perf {
@@ -1071,6 +1070,8 @@ declare global {
       readonly radioReady: boolean;
       readonly carModel: string | null;
       readonly perf: Perf;
+      readonly renderer: THREE.WebGLRenderer;
+      readonly scene: THREE.Scene;
       vehicles: Vehicles;
       player: Player;
       peds: Pedestrians;
@@ -1142,6 +1143,14 @@ window.__game = {
   },
   get perf() {
     return perf;
+  },
+  /** The renderer, for profiling rigs that need to toggle passes at runtime. */
+  get renderer() {
+    return env.renderer;
+  },
+  /** The scene, for the same reason. */
+  get scene() {
+    return env.scene;
   },
   vehicles,
   player,

@@ -70,7 +70,7 @@ export class SceneEnv {
     // the worst way: 0.23 fps at 1000x620 and 0.85 fps at 320x200, because the
     // canvas was never the bottleneck. Paired with the ±70 m follow window,
     // 1024 still gives ~14 cm shadow texels, which is fine for a street.
-    const shadowMapSize = quality.shadowMapSize ?? 1024;
+    const shadowMapSize = quality.shadowMapSize ?? 512;
     this.streaming = !!quality.streaming;
     // Finite world: the shadow frustum spans the whole map. Streamed world: a
     // tight window that follows the player (city.half is effectively unbounded).
@@ -132,6 +132,13 @@ export class SceneEnv {
     cam.bottom = -this.shadowHalf;
     cam.near = 1;
     cam.far = city.extent * 2.5;
+    // The frustum was being set and then never applied. `left`/`right`/`top`/
+    // `bottom` are just numbers; the projection matrix is what the renderer
+    // actually uses, and it is only recomputed when you ask. Without this the
+    // shadow camera kept the whole-map frustum it was built with, so every
+    // building in the city was drawn into the shadow map every frame — 198 of
+    // them, ninety thousand triangles, none of them anywhere near the player.
+    cam.updateProjectionMatrix();
     sun.shadow.bias = -0.0006;
     this.scene.add(sun);
     this.scene.add(sun.target); // target stays at origin; moving the light sweeps shadows
@@ -317,7 +324,22 @@ export class SceneEnv {
    * something that actually glows onto the wall next to it. Falls back to a
    * direct render when the composer is off (mobile) or unavailable.
    */
+  /**
+   * Draw calls and triangles for the whole frame — shadow pass, scene pass and
+   * every post-process tap included.
+   *
+   * `renderer.info` resets itself on every `render()` call, so reading it after
+   * the composer finished reports the last post-process quad and nothing else:
+   * one call, one triangle, for a frame that actually drew the street. The
+   * counters are only meaningful if the reset is moved to the start of the
+   * frame and the totals are read at the end.
+   */
+  readonly frameStats = { calls: 0, triangles: 0 };
+
   render(): void {
+    const info = this.renderer.info;
+    info.autoReset = false;
+    info.reset();
     if (this.composer) {
       // Bloom tracks the day cycle: a noon sky must not bloom. Cap the night
       // end so fascia characters stay readable (Issue #6 / PR #5: no white-out).
@@ -327,6 +349,8 @@ export class SceneEnv {
     } else {
       this.renderer.render(this.scene, this.camera);
     }
+    this.frameStats.calls = info.render.calls;
+    this.frameStats.triangles = info.render.triangles;
   }
 
   private lastTimeOfDay = 0;
