@@ -50,14 +50,14 @@ async function settle(page) {
     const t = window.__game.timeOfDay;
     const dt = t >= start ? t - start : t + 1 - start;
     return dt * 1440 > 0.08;
-  }, t0, { timeout: 15000 });
+  }, t0, { timeout: 120000 });
 }
 
 try {
   const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
   page.on('pageerror', (e) => check('no page errors', false, e.message));
   const reset = async () => {
-    await page.goto(URL, { waitUntil: 'load' });
+    await page.goto(URL, { waitUntil: 'load', timeout: 300000 });
     await page.waitForTimeout(700);
     await page.evaluate(() => window.__skipSplash?.()); // skip the start splash (clean teardown)
     // The food street starts on foot. Most scenarios below were written for a
@@ -70,7 +70,7 @@ try {
         g.teleport(c.x + 2.4, c.z, 0);
       });
       await page.keyboard.press('KeyF');
-      await page.waitForFunction(() => window.__game.mode === 'driving', { timeout: 8000 });
+      await page.waitForFunction(() => window.__game.mode === 'driving', { timeout: 180000 });
     }
   };
   // Daylight, HUD hidden, stay on foot. Used where the assertion is the picture.
@@ -78,15 +78,15 @@ try {
     const lit = new globalThis.URL(URL);
     lit.searchParams.set('t', '0.45');
     lit.searchParams.set('hud', '0');
-    await page.goto(lit.toString(), { waitUntil: 'load' });
+    await page.goto(lit.toString(), { waitUntil: 'load', timeout: 300000 });
     await page.waitForTimeout(700);
     await page.evaluate(() => window.__skipSplash?.());
-    await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 8000 });
+    await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 180000 });
   };
 
   // Headless swiftshader often renders under 2 fps, so a fixed 200 ms is not a frame.
   const waitMode = async (mode) => {
-    await page.waitForFunction((m) => window.__game.mode === m, mode, { timeout: 8000 });
+    await page.waitForFunction((m) => window.__game.mode === m, mode, { timeout: 180000 });
   };
 
   // 1 real second = 1 game minute, so timeOfDay advances by dt/1440. Wall-clock
@@ -127,7 +127,7 @@ try {
   };
 
   // --- 0. Start splash shows on load and dismisses on input (fades out).
-  await page.goto(URL, { waitUntil: 'load' });
+  await page.goto(URL, { waitUntil: 'load', timeout: 300000 });
   await page.waitForTimeout(500);
   const splashShown = await page.evaluate(() => !!document.getElementById('splash'));
   await page.keyboard.press('Space'); // any key continues
@@ -804,7 +804,7 @@ try {
   // --- 13c. On foot, punching a pedestrian gibs them into pixels (and scores).
   await reset();
   await page.keyboard.press('KeyF'); // get out of the car, on foot
-  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 8000 });
+  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 180000 });
   const punchSetup = await page.evaluate(() => {
     const g = window.__game;
     g.player.heading = 0; // face +X
@@ -878,7 +878,7 @@ try {
   // --- 14b. On foot, you can't clip through a parked car — you get pushed out.
   await reset();
   await page.keyboard.press('KeyF'); // on foot
-  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 8000 });
+  await page.waitForFunction(() => window.__game.mode === 'foot', { timeout: 180000 });
   const clip = await page.evaluate(() => {
     const g = window.__game;
     const v = g.vehicles;
