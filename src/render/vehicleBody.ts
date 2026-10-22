@@ -107,13 +107,20 @@ const SEDAN_SECTIONS: Section[] = [
   { z: -2.05, w: 0.70, y: 0.54, h: 0.28, k: 3 },
 ];
 
-/** The glasshouse, inboard and set back — a windscreen rake, not a roof box. */
+/**
+ * The glasshouse: inboard, set back, and — the part that matters — sitting
+ * ON the body. Every one of these sections used to float a fifth of a metre
+ * above the belt line, so the cabin was a thin glass band with a hole under
+ * it: you could see the street through the car, and the roof panel hovered
+ * over the hole like a loose lid. The bottom of every section is the body's
+ * top; the top of the middle sections is the roof.
+ */
 const SEDAN_CABIN: Section[] = [
-  { z: 0.32, w: 0.74, y: 0.88, h: 0.05, k: 3 },
-  { z: -0.10, w: 0.80, y: 1.02, h: 0.20, k: 3 },
-  { z: -0.75, w: 0.82, y: 1.06, h: 0.22, k: 4 },
-  { z: -1.35, w: 0.78, y: 1.02, h: 0.20, k: 3 },
-  { z: -1.72, w: 0.68, y: 0.90, h: 0.08, k: 3 },
+  { z: 0.50, w: 0.60, y: 1.05, h: 0.10, k: 3 },
+  { z: 0.05, w: 0.76, y: 1.15, h: 0.19, k: 3 },
+  { z: -0.70, w: 0.80, y: 1.16, h: 0.18, k: 4 },
+  { z: -1.30, w: 0.76, y: 1.14, h: 0.18, k: 3 },
+  { z: -1.70, w: 0.62, y: 1.04, h: 0.09, k: 3 },
 ];
 
 const COMPACT_SECTIONS: Section[] = [
@@ -128,10 +135,10 @@ const COMPACT_SECTIONS: Section[] = [
 ];
 
 const COMPACT_CABIN: Section[] = [
-  { z: 0.15, w: 0.68, y: 0.84, h: 0.05, k: 3 },
-  { z: -0.25, w: 0.74, y: 0.98, h: 0.19, k: 3 },
-  { z: -0.95, w: 0.75, y: 1.0, h: 0.2, k: 4 },
-  { z: -1.45, w: 0.66, y: 0.9, h: 0.1, k: 3 },
+  { z: 0.30, w: 0.58, y: 1.00, h: 0.09, k: 3 },
+  { z: -0.10, w: 0.74, y: 1.09, h: 0.17, k: 3 },
+  { z: -0.80, w: 0.75, y: 1.10, h: 0.17, k: 4 },
+  { z: -1.40, w: 0.64, y: 1.00, h: 0.09, k: 3 },
 ];
 
 const SPORTS_SECTIONS: Section[] = [
@@ -146,10 +153,10 @@ const SPORTS_SECTIONS: Section[] = [
 ];
 
 const SPORTS_CABIN: Section[] = [
-  { z: 0.2, w: 0.66, y: 0.7, h: 0.04, k: 3 },
-  { z: -0.3, w: 0.72, y: 0.84, h: 0.15, k: 3 },
-  { z: -1.0, w: 0.7, y: 0.84, h: 0.14, k: 4 },
-  { z: -1.5, w: 0.5, y: 0.72, h: 0.05, k: 3 },
+  { z: 0.35, w: 0.58, y: 0.86, h: 0.08, k: 3 },
+  { z: -0.10, w: 0.72, y: 0.95, h: 0.15, k: 3 },
+  { z: -0.80, w: 0.70, y: 0.95, h: 0.15, k: 4 },
+  { z: -1.40, w: 0.50, y: 0.86, h: 0.08, k: 3 },
 ];
 
 const VAN_SECTIONS: Section[] = [
@@ -163,10 +170,10 @@ const VAN_SECTIONS: Section[] = [
 ];
 
 const VAN_CABIN: Section[] = [
-  { z: 1.35, w: 0.8, y: 1.1, h: 0.05, k: 3 },
-  { z: 0.85, w: 0.86, y: 1.24, h: 0.22, k: 3 },
-  { z: 0.0, w: 0.88, y: 1.28, h: 0.24, k: 4 },
-  { z: -0.7, w: 0.86, y: 1.26, h: 0.22, k: 3 },
+  { z: 1.45, w: 0.76, y: 1.32, h: 0.07, k: 3 },
+  { z: 1.00, w: 0.86, y: 1.44, h: 0.17, k: 3 },
+  { z: 0.00, w: 0.88, y: 1.45, h: 0.17, k: 4 },
+  { z: -0.70, w: 0.86, y: 1.44, h: 0.17, k: 3 },
 ];
 
 const PICKUP_SECTIONS: Section[] = [
@@ -181,10 +188,10 @@ const PICKUP_SECTIONS: Section[] = [
 ];
 
 const PICKUP_CABIN: Section[] = [
-  { z: 0.45, w: 0.76, y: 0.98, h: 0.05, k: 3 },
-  { z: 0.0, w: 0.82, y: 1.14, h: 0.2, k: 3 },
-  { z: -0.7, w: 0.82, y: 1.16, h: 0.2, k: 4 },
-  { z: -1.1, w: 0.72, y: 1.0, h: 0.07, k: 3 },
+  { z: 0.60, w: 0.72, y: 1.10, h: 0.07, k: 3 },
+  { z: 0.15, w: 0.82, y: 1.24, h: 0.19, k: 3 },
+  { z: -0.55, w: 0.82, y: 1.25, h: 0.19, k: 4 },
+  { z: -1.05, w: 0.70, y: 1.10, h: 0.07, k: 3 },
 ];
 
 export type BodyShape = 'sedan' | 'compact' | 'sports' | 'van' | 'pickup' | 'ebike';
@@ -246,19 +253,31 @@ function wheel(r: number, width: number): THREE.Group {
 export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMesh {
   const S = SHAPES[shapeId] ?? SHAPES.sedan;
   const group = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.55 });
+  // Car paint is a dielectric with a clearcoat over it, not half metal. At
+  // metalness 0.55 the diffuse half of the shading went away, and with no
+  // environment map to reflect there was nothing left: every car in the
+  // arcade's shadow rendered as a black slab. That is the "unfinished black
+  // box" the review kept pointing at — a shading bug, not a modelling one.
+  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.16 });
   // Tinted glass, and actually glass. A near-black metallic greenhouse with
   // no environment to reflect renders as a black slab — which is what made
   // every car on the street read as an unfinished box, and what made the
   // driver look like a head embedded in the bodywork instead of a person
   // sitting behind a windscreen.
+  // Glass you can actually see. At 0.42 opacity over a dark street the
+  // greenhouse vanished and the car read as a convertible with a loose roof
+  // panel floating over it — the "unfinished box" the review kept seeing.
   const glass = new THREE.MeshStandardMaterial({
-    color: 0x6d8ea3,
-    roughness: 0.12,
-    metalness: 0.1,
+    color: 0x3a4a58,
+    roughness: 0.1,
+    metalness: 0.28,
     transparent: true,
-    opacity: 0.42,
+    opacity: 0.72,
   });
+  // The inside of the car. Without a dark interior behind the glass you look
+  // straight through the greenhouse at the shopfront opposite, and a car with
+  // a hole where the cabin is reads worse than no car at all.
+  const interior = new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.92, metalness: 0 });
   const headMat = new THREE.MeshStandardMaterial({ color: 0xfff3d6, emissive: 0xffe6b0, emissiveIntensity: 2.4 });
   const tailMat = new THREE.MeshStandardMaterial({ color: 0x4a0d10, emissive: 0xff2020, emissiveIntensity: 1.8 });
   const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.3, metalness: 0.85 });
@@ -289,12 +308,42 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   put(loft(S.cabin, 16), glass);
 
   // Pillars: thin body-coloured bars across the glasshouse, so the cabin reads
-  // as a cabin and not a smoked bubble.
-  for (const [z, w] of [[0.3, 0.76], [-0.75, 0.84], [-1.5, 0.7]] as const) {
-    put(new THREE.BoxGeometry(0.07, 0.46, w * 2), paint, xf(0, 1.05, z));
+  // as a cabin and not a smoked bubble. Their height and height above the
+  // belt line come from the cabin's own sections.
+  // `h` is the half height, so a section's top is y + h. Reading it as
+  // y + h/2 put the belt line 20 cm too low and the roof with it, which is
+  // how the interior ended up buried inside the bodywork.
+  const roofY = S.cabin.reduce((m, s2) => Math.max(m, s2.y + s2.h), 0);
+  const beltY = S.body.reduce((m, s2) => Math.max(m, s2.y + s2.h), 0);
+  const pillarH = Math.max(0.2, roofY - beltY);
+  const inner = S.cabin.slice(1, -1);
+  for (const sec of inner) {
+    put(new THREE.BoxGeometry(0.07, pillarH, sec.w * 2), paint, xf(0, beltY + pillarH / 2, sec.z));
   }
-  // Roof panel
-  put(new THREE.BoxGeometry(1.42, 0.07, 1.5), paint, xf(0, 1.24, -0.55));
+  // Roof panel — measured off the cabin instead of hard-coded. It used to be
+  // a fixed slab at y=1.24 over a cabin that stopped at 1.17, with the
+  // windscreen end of the glasshouse 0.36 m below it: a plate of paint
+  // hovering over the car with daylight under it.
+  const cabinW = S.cabin.reduce((m, s2) => Math.max(m, s2.w), 0);
+  const roofW = cabinW * 2 * 0.92;
+  const roofMid = (S.cabin[1].z + S.cabin[S.cabin.length - 2].z) / 2;
+  const roofLen = Math.abs(S.cabin[1].z - S.cabin[S.cabin.length - 2].z) + 0.62;
+  put(new THREE.BoxGeometry(roofW, 0.07, roofLen), paint, xf(0, roofY + 0.03, roofMid));
+
+  // Seats and a dash, in the dark, behind the glass.
+  const zFront = S.cabin.reduce((m, s2) => Math.max(m, s2.z), -1e9);
+  const zBack = S.cabin.reduce((m, s2) => Math.min(m, s2.z), 1e9);
+  const cabinMidZ = (zFront + zBack) / 2;
+  const cabinLen = zFront - zBack;
+  // Just the seat backs, low in the cabin. A full-height black block behind
+  // the glass reads as a crate in the car rather than as seats.
+  const seatTop = beltY + 0.13;
+  put(
+    new THREE.BoxGeometry(cabinW * 1.45, seatTop - beltY, cabinLen * 0.5),
+    interior,
+    xf(0, (beltY + seatTop) / 2, cabinMidZ - cabinLen * 0.12),
+  );
+  put(new THREE.BoxGeometry(cabinW * 1.45, 0.12, 0.26), interior, xf(0, beltY + 0.16, zFront - 0.24));
 
   // Lights, and the wing mirrors.
   for (const sx of [-1, 1]) {

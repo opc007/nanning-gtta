@@ -169,23 +169,29 @@ function addProp(
   });
 }
 
-function stoolsAround(list: LocalProp[], u: number, v: number, towardAisle: number): void {
-  // A table is 0.8 m across and a stool 0.34 m, so a stool whose centre sits
-  // closer than about 0.6 m to the table's is already inside it. They used to
-  // sit at 0.17 m — inside the table's own footprint — and the overlap test
-  // threw some of them away, which is how a stool ended up embedded in a
-  // table leg.
-  // 0.60 m: the table's half-width is 0.40 and the stool's is 0.17, so this
-  // is the closest a stool can stand and still read as a separate thing. They
-  // used to sit at 0.17 m — inside the table's own footprint, which is the
-  // stool in the table leg the review kept catching.
-  const s = 0.6;
-  // One on the aisle side, three on the flanks. The aisle side keeps a
-  // corridor at v=0.
-  addProp(list, 'stool', u, v - Math.sign(towardAisle || 1) * s, true);
+function stoolsAround(
+  list: LocalProp[],
+  u: number,
+  v: number,
+  towardAisle: number,
+  tableHalf = 0.4,
+): void {
+  // The gap has to follow the table. A square table is 0.8 m across and a
+  // round one 1.05, and a stool is 0.34 — so one fixed distance either
+  // overlaps the round table or leaves the square one lonely. They used to
+  // sit at 0.17 m — inside the table's own footprint — which is the stool in
+  // the table leg the review kept catching.
+  const s = tableHalf + 0.23;
+  // One on the aisle side, two on the flanks, one on the far side. The aisle
+  // side only takes a stool when there is room for it: a stool standing in
+  // the corridor is exactly what the review called a blocked walkway, so a
+  // table near the middle puts that stool on the far side instead.
+  const aisle = Math.sign(towardAisle || 1);
+  const far = Math.sign(v || 1) || 1;
+  if (Math.abs(v) - s > 0.78) addProp(list, 'stool', u, v - aisle * s, true);
+  else addProp(list, 'stool', u, v + far * s, true);
   addProp(list, 'stool', u + s, v, true);
   addProp(list, 'stool', u - s, v, true);
-  addProp(list, 'stool', u, v + Math.sign(v || 1) * s, true);
 }
 
 /** Wall board on the back (or a side, if the back is a grill). Not a step. */
@@ -234,10 +240,12 @@ function layoutFor(template: InteriorTemplate, depth: number, width: number): Lo
     addProp(list, 'grill', back, 0, false, { d: Math.min(2.2, counterW), w: 0.75, h: 0.9 });
     addProp(list, 'table-round', 2.4, -side);
     addProp(list, 'table-round', 4.4, side * 0.85);
-    stoolsAround(list, 2.4, -side, -side);
-    stoolsAround(list, 4.4, side * 0.85, side);
-    addProp(list, 'stool', 3.3, 0.15, true);
-    addProp(list, 'stool', 3.3, -0.55, true);
+    stoolsAround(list, 2.4, -side, -side, 0.525);
+    stoolsAround(list, 4.4, side * 0.85, side, 0.525);
+    // These two belong at a table. Standing in the middle of the floor on
+    // their own, they read as furniture that fell out of a van.
+    addProp(list, 'stool', 2.4, -side + 0.78, true);
+    addProp(list, 'stool', 4.4, side * 0.85 - 0.78, true);
     addMenu(list, depth, width, side);
   } else if (template === 'milktea') {
     addProp(list, 'counter', back, 0, false, { d: Math.min(3.4, width - 1.4), w: 0.65, h: 1.0 });
@@ -283,7 +291,7 @@ function addWarmExtras(list: LocalProp[], template: InteriorTemplate, depth: num
     stoolsAround(list, 4.35, -side * 0.6, -1);
   } else if (template === 'bbq') {
     addProp(list, 'table-round', 5.6, -side * 0.3);
-    stoolsAround(list, 5.6, -side * 0.3, -1);
+    stoolsAround(list, 5.6, -side * 0.3, -1, 0.525);
     addProp(list, 'lantern', 4.9, 0, false, hang);
   } else if (template === 'milktea') {
     addProp(list, 'table-high', 3.4, side * 0.55);

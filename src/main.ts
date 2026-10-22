@@ -446,7 +446,20 @@ const MAX_HEALTH = 100;
 // a sitting-on-the-ground pose — head down by the hips — so it cannot be a
 // car seat: the driver's head ended up at the car's belt line, buried in the
 // bodywork. The model also ships a 'drive' clip, which is the one for this.
-const SEAT_Y = 0.1;
+/**
+ * Where the rider sits, and how big they are in the seat.
+ *
+ * The protagonist is a chibi: a metre of head on a metre of body, 1.64 m all
+ * told. That does not go into a car — the cabin is 1.45 m tall, so a driver
+ * at full size has their head through the roof and their knees through the
+ * floor. That is the "sitting pose clips through the bodywork" the review
+ * kept catching, and it is a fact about the model, not about the pose.
+ *
+ * So a driver is scaled down to something a seat can hold, and dropped so
+ * the hips land on the cushion.
+ */
+const RIDER_SCALE = 0.55;
+const SEAT_Y = 0.26;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
 const DAMAGE_PER_SPEED = 5; // health lost per m/s of impact
 const KNOCKBACK = 1.6;
@@ -509,8 +522,17 @@ function toggleVehicle(): void {
   } else {
     const i = vehicles.nearest(player.x, player.z, ENTER_DISTANCE);
     if (i >= 0) {
+      const role = vehicles.carStates()[i]?.role ?? 'ai';
       vehicles.enter(i);
       mode = 'driving';
+      // Taking somebody else's car is a crime. It was silently free here, so
+      // the street had no risk in it at all — the one thing GTA's traffic is
+      // for. A police car is worth two of an ordinary one.
+      if (role === 'ai' || role === 'parked') {
+        heat = Math.min(100, heat + CRIME_HEAT);
+      } else if (role === 'police') {
+        heat = Math.min(100, heat + CRIME_HEAT * 2);
+      }
       radio?.enterCar(i);
       radioCarIndex = i;
       radioPrimed = true;
@@ -977,11 +999,16 @@ function render(alpha: number, frameDt: number): void {
     // A seat sits behind the middle of the car, and the rider faces forward.
     const fx = Math.cos(ridingPose.heading);
     const fz = -Math.sin(ridingPose.heading);
-    avatar.position.set(ridingPose.x - fx * 0.35, SEAT_Y, ridingPose.z - fz * 0.35);
+    // The seat is behind the middle of the car, and the cabin's centre is
+    // further back still: at 0.35 m the rider's legs reached forward over
+    // the bonnet instead of under the dashboard.
+    avatar.position.set(ridingPose.x - fx * 0.62, SEAT_Y, ridingPose.z - fz * 0.62);
     avatar.rotation.y = ridingPose.heading;
+    avatar.scale.setScalar(RIDER_SCALE);
   } else {
     avatar.position.set(ax, ay, az);
     avatar.rotation.y = ah;
+    avatar.scale.setScalar(1);
   }
   // Acceptance stills set __hideAvatar so the hero does not block the room.
   avatar.visible = !(globalThis as unknown as { __hideAvatar?: boolean }).__hideAvatar;
@@ -1195,6 +1222,9 @@ declare global {
       teleport(x: number, z: number, heading?: number): void;
       freeze(on: boolean): void;
       interiorProps(): { prop: string; shopId: string; x: number; z: number; w: number; d: number; h: number }[];
+      /** Where the rider's body actually is, in world metres. A limb through
+       *  the floor of a car is a number, not an opinion. */
+      riderBox(): { min: [number, number, number]; max: [number, number, number] } | null;
       readonly interior: boolean;
       readonly camDist: number;
       readonly camBlocked: boolean;
@@ -1278,6 +1308,26 @@ window.__game = {
   },
   interiorProps() {
     return interiors?.props() ?? [];
+  },
+  riderBox() {
+    const root = clipRig?.group;
+    if (!root) return null;
+    // The box of a skinned mesh is its bind pose — arms out, and in this
+    // model's case nonsense tall — so the head's own world position is the
+    // honest number: it is what actually comes through the roof.
+    let headY: number | null = null;
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      if (!/head/i.test(o.name)) return;
+      const y = o.getWorldPosition(new THREE.Vector3()).y;
+      headY = headY === null ? y : Math.max(headY, y);
+    });
+    const b = new THREE.Box3().setFromObject(root);
+    return {
+      min: [+b.min.x.toFixed(3), +b.min.y.toFixed(3), +b.min.z.toFixed(3)],
+      max: [+b.max.x.toFixed(3), +b.max.y.toFixed(3), +b.max.z.toFixed(3)],
+      headY: headY === null ? null : +(headY as number).toFixed(3),
+    };
   },
   get interior() {
     return insideShop;

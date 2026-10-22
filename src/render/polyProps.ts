@@ -135,11 +135,18 @@ export async function addPolyEbikes(
   if (!tmpl) return 0;
   const root = new THREE.Group();
   root.name = 'nn-poly-ebikes';
+  // The template carries the ground alignment the loader worked out — the
+  // model's own origin is somewhere in the middle of the frame, so `prepare`
+  // shifts it down until the wheels touch y=0. A clone keeps that shift in
+  // its position, and overwriting the position threw it away: every scooter
+  // on the street hovered a hand's width above the pavement, which is the
+  // "the e-bike floats in the road" the review kept catching.
+  const offset = tmpl.position.clone();
   for (const s of spots) {
     const clone = tmpl.clone(true);
     // The covered walkway is a step up from the carriageway, so a scooter
     // parked under it stands on that step — not with its wheels in it.
-    clone.position.set(s.x, s.y ?? 0, s.z);
+    clone.position.set(s.x + offset.x, (s.y ?? 0) + offset.y, s.z + offset.z);
     clone.rotation.y += s.heading;
     root.add(clone);
   }

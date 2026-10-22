@@ -93,6 +93,7 @@ export class SceneEnv {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x141a2e);
+    this.addEnvironment();
     this.scene.fog = new THREE.Fog(0x141a2e, city.extent * 0.18, city.extent * 0.7);
 
     this.camera = new THREE.PerspectiveCamera(
@@ -112,6 +113,45 @@ export class SceneEnv {
     this.setupComposer(window.innerWidth, window.innerHeight, quality.bloom ?? true);
     window.addEventListener('resize', this.onResize);
     window.addEventListener('orientationchange', this.onResize);
+  }
+
+  /**
+   * An environment for the metals and the glass to reflect.
+   *
+   * There was none, so every car had nothing to catch the light with: no
+   * highlight along the bonnet, no sheen on the windscreen, and a half-metal
+   * paint that went black in the arcade's shadow. A four-pixel-wide gradient
+   * — sky above, warm street below — is enough for the reflections to land.
+   */
+  private addEnvironment(): void {
+    try {
+      const W = 4;
+      const H = 32;
+      const data = new Uint8Array(W * H * 4);
+      const sky = [0.62, 0.72, 0.86];
+      const ground = [0.42, 0.38, 0.32];
+      for (let y = 0; y < H; y += 1) {
+        const t = y / (H - 1);
+        const k = Math.pow(1 - t, 1.6);
+        for (let x = 0; x < W; x += 1) {
+          const i = (y * W + x) * 4;
+          data[i] = Math.round(255 * (ground[0] + (sky[0] - ground[0]) * k));
+          data[i + 1] = Math.round(255 * (ground[1] + (sky[1] - ground[1]) * k));
+          data[i + 2] = Math.round(255 * (ground[2] + (sky[2] - ground[2]) * k));
+          data[i + 3] = 255;
+        }
+      }
+      const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromEquirectangular(tex).texture;
+      pmrem.dispose();
+      tex.dispose();
+    } catch {
+      // No environment is survivable — it only costs the reflections.
+    }
   }
 
   private addLights(city: City, shadowMapSize: number): void {
