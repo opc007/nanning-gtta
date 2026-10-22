@@ -11,7 +11,7 @@ import { World, defineComponent } from '../ecs/World';
  * over the player's shoulder, which is the only state in which the player, not
  * the world, decides where they go.
  */
-type State = 'walk' | 'shoved' | 'gibbed' | 'down' | 'carried';
+type State = 'walk' | 'shoved' | 'gibbed' | 'down' | 'carried' | 'fight';
 
 interface Ped {
   state: State;
@@ -24,6 +24,10 @@ interface Ped {
   turnTimer: number;
   color: number; // shirt colour, reused for gib cubes
   scared: boolean; // fleeing the on-foot player (trembles + runs away)
+  hostile: boolean; // in a fight with the player: closes in and swings
+  swingCd: number; // seconds until this one swings again
+  fightT: number; // how long the fight has lasted; they give up eventually
+  panic: number; // seconds left of running away from you after a punch
   hp: number; // punches stagger, they do not delete
   /** Who is carrying them, and how long they have been held. */
   heldBy: number; // player index, -1 when free
@@ -72,6 +76,20 @@ const PATH_LOOK = 18; // vector: a fast threat bearing down from up to this far
 const PATH_WIDTH = 3.6; // ...within this lateral corridor of its heading (its sweep)
 const VECTOR_SPEED = 8; // ...and moving at least this fast (a car, not a stroll)
 
+// ── Brawls ──────────────────────────────────────────────────────────────────
+// Punching one person is not a private matter. Their friends notice, and some
+// of them come and settle it. This is the difference between a punching bag
+// and a street fight: the street answers back.
+const AID_RADIUS = 8; // how far a friend has to be to notice the punch
+const AID_CHANCE = 0.45; // ...and how likely they are to care enough to join
+const FIGHT_REACH = 2.0; // swinging distance
+const FIGHT_SPEED = 2.9; // closing speed, a jog
+const SWING_DAMAGE = 7; // health the player loses per swing
+const SWING_COOLDOWN = 1.35; // seconds between swings
+const FIGHT_BREAK = 14; // if you get this far away, they give up
+const FIGHT_GIVE_UP = 9; // no brawl lasts forever
+const PANIC_TIME = 3.5; // how long someone runs from you after you hit them
+
 /**
  * Wandering pedestrians with a three-state life: walking, shoved (clipped at
  * low speed — flung, tumbles, gets back up, survives), or gibbed (hit fast
@@ -94,6 +112,12 @@ export class Pedestrians {
   private curImpact?: ImpactQuery;
   private curThreat: Threat;
   private curResolveCars?: ResolveCars;
+  private curFoe: { x: number; z: number } | null = null;
+
+  /** Called when a hostile pedestrian lands a swing on the player. */
+  onSwing?: (x: number, z: number, damage: number) => void;
+  /** Called the first time a brawl starts, so the street can call the police. */
+  onFightStart?: () => void;
 
   // Shares the one game World + the shared Debris pool; runs its passes directly.
   constructor(
@@ -114,6 +138,7 @@ export class Pedestrians {
       const heading = this.rng.range(0, Math.PI * 2);
       const ped: Ped = {
         state: 'walk', x, z, y: 0, heading, tumble: 0, color, scared: false,
+        hostile: false, swingCd: 0, fightT: 0, panic: 0,
         hp: PED_HP, heldBy: -1, holdT: 0, talking: 0,
         speed: this.rng.range(1, 2.2),
         turnTimer: this.rng.range(1, 5),
@@ -126,11 +151,19 @@ export class Pedestrians {
     }
   }
 
-  update(city: City, dt: number, impactAt?: ImpactQuery, threat?: Threat, resolveCars?: ResolveCars): void {
+  update(
+    city: City,
+    dt: number,
+    impactAt?: ImpactQuery,
+    threat?: Threat,
+    resolveCars?: ResolveCars,
+    foe?: { x: number; z: number } | null,
+  ): void {
     this.curCity = city;
     this.curImpact = impactAt;
     this.curThreat = threat;
     this.curResolveCars = resolveCars;
+    this.curFoe = foe ?? null;
     this.stepPeds(this.world, dt);
   }
 
@@ -146,6 +179,7 @@ export class Pedestrians {
       ped.py = ped.y;
       ped.ph = ped.heading;
       ped.ptumble = ped.tumble;
+      if (ped.panic > 0) ped.panic -= dt;
 
       if (ped.state === 'carried') {
         // Held in front of the carrier; the carrier's own position is applied
@@ -171,6 +205,10 @@ export class Pedestrians {
       }
       if (ped.state === 'shoved') {
         this.updateShoved(ped, city, dt);
+        continue;
+      }
+      if (ped.state === 'fight') {
+        this.updateFight(ped, dt);
         continue;
       }
 
@@ -210,6 +248,27 @@ export class Pedestrians {
         }
       }
 
+      // A punch you threw starts a short panic: they back away from you, on
+      // foot. Before this, `scared` was only ever set by the car-threat path,
+      // so on foot a punched pedestrian just kept wandering, which read as the
+      // hit having done nothing at all.
+      if (ped.panic > 0 && !ped.hostile) {
+        const foe = this.curFoe;
+        if (foe) {
+          const pdx = ped.x - foe.x;
+          const pdz = ped.z - foe.z;
+          const pl = Math.hypot(pdx, pdz);
+          if (pl > 0.2) {
+            ped.scared = true;
+            const fx = pdx / pl;
+            const fz = pdz / pl;
+            ped.heading = Math.atan2(-fz, fx);
+            ped.x += fx * FLEE_SPEED * dt;
+            ped.z += fz * FLEE_SPEED * dt;
+          }
+        }
+      }
+
       if (!ped.scared) {
         ped.turnTimer -= dt;
         if (ped.turnTimer <= 0) {
@@ -235,6 +294,78 @@ export class Pedestrians {
       const imp = impactAt?.(ped.x, ped.z);
       if (imp && imp.speed >= GIB_SPEED) this.gib(ped, imp);
       else if (imp && imp.speed >= SHOVE_SPEED) this.shove(ped, imp);
+    }
+  }
+
+  /**
+   * A fight in progress: close on the player, swing when in reach, and know
+   * when to give up. Without that last part this is a mob that never stops,
+   * which reads as broken rather than as a fight.
+   */
+  private updateFight(ped: Ped, dt: number): void {
+    ped.fightT += dt;
+    ped.swingCd -= dt;
+    const foe = this.curFoe;
+    if (!foe) {
+      ped.state = 'walk';
+      ped.hostile = false;
+      ped.scared = true;
+      return;
+    }
+    const dx = foe.x - ped.x;
+    const dz = foe.z - ped.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > FIGHT_BREAK || ped.fightT > FIGHT_GIVE_UP) {
+      ped.state = 'walk';
+      ped.hostile = false;
+      ped.scared = true;
+      ped.fightT = 0;
+      return;
+    }
+    ped.scared = false;
+    ped.panic = 0;
+    if (dist > 0.2) {
+      const nx = dx / dist;
+      const nz = dz / dist;
+      ped.heading = Math.atan2(-nz, nx);
+      // Close the gap, but stop at swinging distance instead of stacking
+      // inside the player.
+      if (dist > FIGHT_REACH) {
+        ped.x += nx * FIGHT_SPEED * dt;
+        ped.z += nz * FIGHT_SPEED * dt;
+      }
+    }
+    const fixed = this.curCity!.grid.resolve(ped.x, ped.z, RADIUS);
+    ped.x = fixed.x;
+    ped.z = fixed.z;
+    if (dist < FIGHT_REACH && ped.swingCd <= 0) {
+      ped.swingCd = SWING_COOLDOWN;
+      this.onSwing?.(ped.x, ped.z, SWING_DAMAGE);
+    }
+  }
+
+  /**
+   * The friends of the person you just hit. Not everyone cares — some just
+   * walk faster — but enough of them do that a punch on a busy street stops
+   * being a private act.
+   */
+  private rouse(victim: Ped): void {
+    // One report per brawl, not one per person who joins it.
+    const hadFight = this.peds.some((o) => o.hostile);
+    for (const other of this.peds) {
+      if (other === victim) continue;
+      if (other.state !== 'walk' || other.hostile) continue;
+      const d = Math.hypot(other.x - victim.x, other.z - victim.z);
+      if (d > AID_RADIUS) continue;
+      if (!this.rng.chance(AID_CHANCE)) continue;
+      other.hostile = true;
+      other.state = 'fight';
+      other.fightT = 0;
+      other.panic = 0;
+      other.scared = false;
+      // Stagger the swings so three of them do not all connect at once.
+      other.swingCd = SWING_COOLDOWN * this.rng.range(0.5, 1.4);
+      if (!hadFight) this.onFightStart?.();
     }
   }
 
@@ -332,6 +463,8 @@ export class Pedestrians {
     ped.talking = 0;
     this.shove(ped, { vx: dirX * SHOVE_SPEED * 0.8, vz: dirZ * SHOVE_SPEED * 0.8 });
     ped.scared = true; // and they remember your face
+    ped.panic = PANIC_TIME; // and they run from you
+    this.rouse(ped); // and their friends come to settle it
     if (ped.hp <= 0) {
       ped.hp = PED_HP;
       ped.state = 'down';

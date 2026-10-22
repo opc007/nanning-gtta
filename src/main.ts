@@ -196,6 +196,11 @@ if (heroFill) env.scene.add(heroFill);
   // on the clip's first frame.
   get mixerTime() { return Number(urlParams.get('mixer') ?? NaN); },
   get interiors() { return interiors; },
+  // The street session, and the people on it. The crowd is the only population
+  // of pedestrians this street actually has, so anything that wants to know
+  // about "the people on the street" needs it.
+  get session() { return session ?? null; },
+  get crowd() { return session?.crowd ?? null; },
 };
 
 // Sfx is constructed here so the street session can blip on a purchase. The
@@ -229,6 +234,24 @@ if (nanning) {
     onBlip: () => sfx.footstep(),
   });
   session.attachProps(interiors!);
+
+  // The street answers back. A hostile pedestrian connects, and it goes
+  // through the same health path a car impact takes: one bad brawl can end
+  // the night.
+  session.crowd.onSwing = (_x, _z, damage) => {
+    if (mode !== 'foot' || wasted || busted) return;
+    health = Math.max(0, health - damage);
+    hitBanner = '俾人揍咗一拳头';
+    hitBannerT = 1.2;
+    sfx.punch();
+    if (health <= 0) enterWasted();
+  };
+  // A brawl in public is a public event. One patrol car is enough to start.
+  session.crowd.onFightStart = () => {
+    heat = Math.min(100, heat + FIGHT_HEAT);
+    hitBanner = '有人帮手，快走';
+    hitBannerT = 1.8;
+  };
 }
 
 // Warm glow that rides the active actor so the night street reads up close.
@@ -275,6 +298,23 @@ const peds = new Pedestrians(
   debris,
   streaming ? 0 : nanning ? 0 : touch ? 28 : 60,
 );
+// The street answers back. A hostile pedestrian connects, and it goes through
+// the same health path a car impact takes: one bad brawl can end the night.
+peds.onSwing = (_x, _z, damage) => {
+  if (mode !== 'foot' || wasted || busted) return;
+  health = Math.max(0, health - damage);
+  hitBanner = '俾人揍咗一拳头';
+  hitBannerT = 1.2;
+  sfx.punch();
+  if (health <= 0) enterWasted();
+};
+// A brawl in public is a public event. One patrol car is enough to start.
+peds.onFightStart = () => {
+  heat = Math.min(100, heat + FIGHT_HEAT);
+  hitBanner = '有人帮手，快走';
+  hitBannerT = 1.8;
+};
+
 const hud = new HUD(container, city, touch, streaming);
 
 let touchRoot: HTMLElement | undefined;
@@ -407,6 +447,7 @@ const TALK_REACH = 2.8;
 // Wanted system: "heat" rises with crimes and decays after a grace period;
 // it maps to 0–5 stars, and each star is one chasing police car.
 const CRIME_HEAT = 16; // heat added per pedestrian you personally run over
+const FIGHT_HEAT = 20; // heat added when a brawl starts (one patrol car)
 const HEAT_GRACE = 4; // seconds OUT OF POLICE SIGHT before heat starts to cool
 const HEAT_DECAY = 11; // heat lost per second once cooling
 let stars = 0;
@@ -528,7 +569,7 @@ function updateFoot(dt: number): void {
       // Carrying someone makes you slow, and a punch impossible. Without a tax,
       // picking people up is strictly better than talking to them and nobody
       // would ever choose to talk.
-      speedMul: peds.carrying() ? 0.55 : 1,
+      speedMul: peds.carrying() || session?.crowd.carrying() ? 0.55 : 1,
       carry: 'none',
       satiety: session?.shops.wallet.satiety ?? 80,
     },
@@ -540,13 +581,18 @@ function updateFoot(dt: number): void {
   if (mode === 'foot' && controls.grabPressed()) {
     const dirX = Math.cos(player.heading);
     const dirZ = -Math.sin(player.heading);
-    if (peds.carrying()) {
+    const crowd = session?.crowd;
+    if (peds.carrying() || crowd?.carrying()) {
       // Already holding someone: G lets go, J throws.
       peds.release(0, dirX, dirZ);
+      crowd?.release(0, dirX, dirZ);
       hitBanner = '放低咗';
       hitBannerT = 1.2;
     } else if (currentTarget?.kind === 'ped') {
-      if (peds.grab(player.x, player.z, dirX, dirZ, PUNCH_REACH)) {
+      // One verb, one owner: the target knows how to be grabbed, so the
+      // caller never has to know which population of people it reached.
+      const grabbed = currentTarget.grab?.() ?? peds.grab(player.x, player.z, dirX, dirZ, PUNCH_REACH);
+      if (grabbed) {
         hitBanner = '捉住佢';
         hitBannerT = 1.6;
       }
@@ -709,7 +755,7 @@ function update(dt: number): void {
     else bustedTimer -= dt;
     vehicles.update(city, dt, null, null);
     flushCarWrecks();
-    peds.update(city, dt, runOverQuery, null, resolveCars);
+    peds.update(city, dt, runOverQuery, null, resolveCars, null);
     debris.update(dt); // shared pool, advanced once per frame
     if ((wasted && wastedTimer <= 0) || (busted && bustedTimer <= 0)) respawn();
     controls.endFrame();
@@ -751,8 +797,9 @@ function update(dt: number): void {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
       // Both hands full: a swing becomes a throw.
-      if (peds.carrying()) {
+      if (peds.carrying() || session?.crowd.carrying()) {
         peds.release(THROW_POWER, dirX, dirZ);
+        session?.crowd.release(THROW_POWER, dirX, dirZ);
         hitBanner = '掷出去';
         hitBannerT = 1.2;
         return;
@@ -798,7 +845,14 @@ function update(dt: number): void {
   updateBusted(dt);
   // Pedestrians fear the CAR only (not the player on foot): proximity, or a fast
   // car on a vector to hit them. Threat carries velocity for the vector trigger.
-  peds.update(city, dt, runOverQuery, mode === 'driving' ? chaseTarget() : null, resolveCars);
+  peds.update(
+    city,
+    dt,
+    runOverQuery,
+    mode === 'driving' ? chaseTarget() : null,
+    resolveCars,
+    mode === 'foot' ? { x: player.x, z: player.z } : null,
+  );
   debris.update(dt); // shared pool, advanced once per frame
   controls.endFrame();
 }
@@ -995,7 +1049,10 @@ function render(alpha: number, frameDt: number): void {
   if (HUD_ON) hud.setBusted(busted);
 
   if (session) {
-    session.tick(frameDt, timeOfDay, player.x, player.z, mode === 'foot', heat, follow.yaw, env.scene, daylightFactor(timeOfDay));
+    session.tick(
+      frameDt, timeOfDay, player.x, player.z, mode === 'foot', heat,
+      follow.yaw, env.scene, daylightFactor(timeOfDay), player.heading,
+    );
     session.render(env.camera);
     const nearCar = mode === 'foot' && vehicles.nearest(player.x, player.z, ENTER_DISTANCE) >= 0;
     session.hud.setMountHint(nearCar);

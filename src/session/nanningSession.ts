@@ -141,6 +141,9 @@ export class NanningSession {
         });
       }
     }
+    // The people you can actually see. They used to be missing from this list
+    // entirely, so the reticle never found them and a punch never landed.
+    out.push(...this.crowd.targets());
     for (const st of this.shops.states) {
       out.push({
         kind: 'shop', id: st.unit.id, x: st.unit.x, z: st.unit.z,
@@ -162,6 +165,13 @@ export class NanningSession {
    * same act even when the outcome is wildly different.
    */
   strikeTarget(t: Target, damage: number): { label: string; broke: boolean } | null {
+    if (t.kind === 'ped') {
+      // A person knows how to be punched. Each candidate carries its own
+      // strike, so the caller never has to know which population it hit.
+      if (!t.strike) return null;
+      if (!t.strike(damage)) return null;
+      return { label: t.label, broke: false };
+    }
     if (t.kind === 'shop') {
       const st = this.shops.states.find((s) => s.unit.id === t.id);
       if (!st) return null;
@@ -298,6 +308,7 @@ export class NanningSession {
     yaw: number,
     scene: THREE.Scene,
     daylight: number,
+    heading = 0,
   ): void {
     const hour = hourFromDay(timeOfDay);
     this.nightOpen = nightMarketOpen(hour);
@@ -314,7 +325,7 @@ export class NanningSession {
       yaw,
     );
     this.debtor = onFoot ? this.crowd.nearestDebtor(px, pz) : null;
-    this.crowd.update(dt, px, pz, heat, this.shops.wallet.smashed);
+    this.crowd.update(dt, px, pz, heat, this.shops.wallet.smashed, heading);
   }
 
   render(camera: THREE.Camera): void {
