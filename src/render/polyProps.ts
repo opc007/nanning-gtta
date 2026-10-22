@@ -129,7 +129,7 @@ export async function addPolyLanterns(
  */
 export async function addPolyEbikes(
   scene: THREE.Scene,
-  spots: { x: number; z: number; heading: number }[],
+  spots: { x: number; z: number; heading: number; y?: number }[],
 ): Promise<number> {
   const tmpl = await preloadPolyEbike();
   if (!tmpl) return 0;
@@ -137,7 +137,9 @@ export async function addPolyEbikes(
   root.name = 'nn-poly-ebikes';
   for (const s of spots) {
     const clone = tmpl.clone(true);
-    clone.position.set(s.x, 0, s.z);
+    // The covered walkway is a step up from the carriageway, so a scooter
+    // parked under it stands on that step — not with its wheels in it.
+    clone.position.set(s.x, s.y ?? 0, s.z);
     clone.rotation.y += s.heading;
     root.add(clone);
   }

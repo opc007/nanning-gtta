@@ -60,7 +60,9 @@ interface Car {
 }
 
 const PLAYER_COLOR = 0x10a0c8;
-const TRAFFIC_COLORS = [0xb23a3a, 0x3a6db2, 0xd9b44a, 0x4ab36a, 0xcccccc, 0x2a2a2a, 0xc06a2a];
+// No near-black: with a dark glasshouse, a black car is a black slab. The
+// palette is light enough that every car on the street reads as a car.
+const TRAFFIC_COLORS = [0xb23a3a, 0x3a6db2, 0xd9b44a, 0x4ab36a, 0xcccccc, 0x9aa0a6, 0xc06a2a, 0x7a5fb0];
 
 const CAR_RADIUS = 1.9;
 const LANE_CORRECT = 2.2; // how hard AI steers back to lane centerline

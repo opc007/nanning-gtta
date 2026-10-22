@@ -553,26 +553,28 @@ async function mountPolyLanterns(scene: THREE.Scene, city: NanningCity): Promise
  */
 async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<void> {
   const WARM = new Set(['fuji', 'zhongshan-fenjiao', 'rongji', 'hengzhou']);
-  const spots: { x: number; z: number; heading: number }[] = [];
+  const spots: { x: number; z: number; heading: number; y?: number }[] = [];
+  // Parked along the street, not across it. A scooter is nearly two metres
+  // long: laid across the carriageway it reached from the columns to the
+  // shopfronts, and its handlebars were inside the columns.
+  const heading = Math.PI / 2;
+  // Under the arcade, clear of the columns, on the raised pavement.
+  const PARK_X = STREET_HALF + 0.95;
+  const PARK_Y = ARCADE_RAISE;
   for (const unit of city.shops) {
     if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
-    // Kerb on the same side as the shop (nx points from shop into the street,
-    // so -nx * STREET_HALF is the near kerb).
-    const x = -unit.nx * (STREET_HALF + 1.15);
-    // Parked along +Z; flip 180° on the west kerb so noses face the same way.
-    const heading = unit.nx < 0 ? Math.PI / 2 : -Math.PI / 2;
-    spots.push({ x, z: unit.z - 1.1, heading });
-    spots.push({ x, z: unit.z + 1.1, heading });
+    // The same side as the shop: nx points from the shop into the street, so
+    // -nx is the near kerb.
+    const x = -unit.nx * PARK_X;
+    spots.push({ x, z: unit.z - 1.1, heading, y: PARK_Y });
+    spots.push({ x, z: unit.z + 1.1, heading, y: PARK_Y });
   }
-  // Extra pairs along both kerbs so mid-street night framing is not empty.
+  // Extra pairs along both sides so mid-street framing is not empty.
   for (const side of [-1, 1] as const) {
-    // Under the arcade, not in the traffic lane: the columns are at the
-    // kerb line and a scooter parked at the kerb was standing inside them.
-    const x = side * (STREET_HALF + 1.15);
-    const heading = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+    const x = side * PARK_X;
     for (let z = STREET_Z0 + 25; z < STREET_Z1 - 25; z += 45) {
-      spots.push({ x, z: z - 0.9, heading });
-      spots.push({ x, z: z + 0.9, heading });
+      spots.push({ x, z: z - 0.9, heading, y: PARK_Y });
+      spots.push({ x, z: z + 0.9, heading, y: PARK_Y });
     }
   }
   await addPolyEbikes(scene, spots);

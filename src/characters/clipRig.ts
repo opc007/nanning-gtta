@@ -43,6 +43,15 @@ const LOCOMOTION = ['idle', 'walk', 'sprint', 'jump', 'fall', 'sit', 'drive', 'd
 export interface ClipCharacter extends CharacterRig {
   /** Cross-fade to a clip immediately, ignoring the locomotion mapping. */
   play(name: string, fade?: number): void;
+  /**
+   * Advance the mixer without changing the clip.
+   *
+   * `update()` was the only thing that ticked the mixer, and it was only
+   * called when the character was on foot — so the driving pose was selected
+   * and then never played: the rig stood in the bind pose inside the car for
+   * as long as you drove.
+   */
+  tick(dt: number): void;
   /** 0..1 through the current one-shot clip, for a deterministic capture. */
   setOneShot(name: OneShot | null, progress: number): void;
   setMixerTime(t: number, freeze?: boolean): void;
@@ -154,6 +163,10 @@ export function createClipCharacter(
     clips,
     update,
     play: (name: string, fade = FADE) => crossFadeTo(name, fade),
+    tick: (dt: number) => {
+      if (!mixer || frozen) return;
+      mixer.update(Math.min(dt, 0.05));
+    },
     setMixerTime: (t: number, freeze = true) => {
       if (!mixer) return;
       frozen = freeze;

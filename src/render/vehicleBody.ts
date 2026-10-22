@@ -247,10 +247,18 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   const S = SHAPES[shapeId] ?? SHAPES.sedan;
   const group = new THREE.Group();
   const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.55 });
-  // Tinted glass, not black metal. A near-black metallic greenhouse with no
-  // environment to reflect renders as a black slab, which is what made every
-  // car on the street read as an unfinished box.
-  const glass = new THREE.MeshStandardMaterial({ color: 0x38505f, roughness: 0.22, metalness: 0.3 });
+  // Tinted glass, and actually glass. A near-black metallic greenhouse with
+  // no environment to reflect renders as a black slab — which is what made
+  // every car on the street read as an unfinished box, and what made the
+  // driver look like a head embedded in the bodywork instead of a person
+  // sitting behind a windscreen.
+  const glass = new THREE.MeshStandardMaterial({
+    color: 0x6d8ea3,
+    roughness: 0.12,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 0.42,
+  });
   const headMat = new THREE.MeshStandardMaterial({ color: 0xfff3d6, emissive: 0xffe6b0, emissiveIntensity: 2.4 });
   const tailMat = new THREE.MeshStandardMaterial({ color: 0x4a0d10, emissive: 0xff2020, emissiveIntensity: 1.8 });
   const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.3, metalness: 0.85 });

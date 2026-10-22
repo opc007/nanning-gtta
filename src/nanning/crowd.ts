@@ -79,7 +79,7 @@ const GRAVITY = 18;
  * no minimum at all, and the knots came out with people standing inside one
  * another.
  */
-const CROWD_GAP = 0.85;
+const CROWD_GAP = 1.05;
 
 /** Draw a line of text into a rounded bubble sprite. */
 function makeBubble(): THREE.Sprite {

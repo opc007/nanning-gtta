@@ -446,7 +446,7 @@ const MAX_HEALTH = 100;
 // a sitting-on-the-ground pose — head down by the hips — so it cannot be a
 // car seat: the driver's head ended up at the car's belt line, buried in the
 // bodywork. The model also ships a 'drive' clip, which is the one for this.
-const SEAT_Y = 0.3;
+const SEAT_Y = 0.1;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
 const DAMAGE_PER_SPEED = 5; // health lost per m/s of impact
 const KNOCKBACK = 1.6;
@@ -990,7 +990,14 @@ function render(alpha: number, frameDt: number): void {
     if (ridingPose) {
       // The procedural fallback rig has no clip library, so it has nothing to
       // drive with — only the Kenney clip character does.
-      clipRig?.play('drive', 0.25);
+      //
+      // 'drive' in this model is a leaning-forward run, not a seat. The model
+      // also ships 'wheelchair-sit', which is the one with the legs forward
+      // and the hips in a chair — a car seat is a chair.
+      clipRig?.play('wheelchair-sit', 0.25);
+      // And the mixer has to be advanced: the rig is not updated while the
+      // player is driving, so the pose was chosen and then never played.
+      clipRig?.tick(frameDt);
     } else {
       liveRig.update(player.speed, frameDt, {
         state: player.state === 'air' ? 'air' : player.state,
