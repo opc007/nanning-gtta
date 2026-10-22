@@ -56,7 +56,7 @@ function assertRealShot(path) {
 
 async function shot(name) {
   const path = join(OUT, `accept-${name}.png`);
-  await page.screenshot({ path, timeout: 180000 });
+  await page.screenshot({ path, timeout: 300000 });
   assertRealShot(path);
   if (MEDIA) copyFileSync(path, join(MEDIA, `accept-${name}.png`));
   console.log('  →', name, path, `${(statSync(path).size / 1024) | 0}KB`);
@@ -247,7 +247,7 @@ async function shootInterior(defId, name) {
     [meta, best.eye],
   );
   await page.waitForTimeout(500);
-  await page.screenshot({ path, timeout: 180000 });
+  await page.screenshot({ path, timeout: 300000 });
   assertRealShot(path);
   const lit = litFraction(path);
   if (lit < 0.35) throw new Error(`${path} still too dark (lit=${lit})`);
@@ -355,7 +355,7 @@ async function shootFenjiaoWok() {
   }, [aim]);
   await page.waitForTimeout(700);
   const path = join(OUT, 'accept-interior-fenjiao.png');
-  await page.screenshot({ path, timeout: 180000 });
+  await page.screenshot({ path, timeout: 300000 });
   assertRealShot(path);
   const lit = litFraction(path);
   if (lit < 0.35) throw new Error(`${path} too dark (lit=${lit})`);
@@ -410,10 +410,18 @@ if (ONLY === 'all' || ONLY === 'hero') {
   // then watch the height and fire when he is actually up there. The sandbox
   // runs at a fraction of a frame per second, which makes the apex last
   // long enough to catch rather than making it impossible to catch.
+  // Trigger the jump the way the game does it. The controller jumps when its
+  // input buffer is filled and it is allowed to, and it applies its own takeoff
+  // speed, gravity, coyote time and stamina cost — so this is the same jump
+  // Space produces, caught mid-flight. Writing `vy` by hand did nothing at all:
+  // `Player.vy` is a read-only getter over the sim, so the assignment was
+  // silently discarded and the height never left the floor.
   await page.evaluate(() => {
-    const pl = window.__nn.player;
-    pl.vy = 6.2;
-    pl.grounded = false;
+    const sim = window.__nn.player.sim;
+    sim.jumpBuffer = 0.2;
+    sim.grounded = true;
+    sim.coyote = 0.2;
+    sim.landTimer = 0;
   });
   let apex = 0;
   for (let i = 0; i < 200; i++) {
