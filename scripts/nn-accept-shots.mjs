@@ -5,6 +5,7 @@
  *
  * ONLY=interiors  — retake the four shop rooms only (default for polish loops)
  * ONLY=poly       — fenjiao (wok) + fuji-door + night-street (e-bike kerb)
+ * ONLY=hero       — the five protagonist action stills only
  * ONLY=all        — full Issue #6 checklist
  */
 import { chromium } from 'playwright';
@@ -33,10 +34,14 @@ page.on('pageerror', (e) => errs.push(e.message.split('\n')[0]));
 
 async function goto(qs) {
   const base = URL.split('?')[0];
-  await page.goto(`${base}?${qs}`, { waitUntil: 'load' });
+  await page.goto(`${base}?${qs}`, { waitUntil: 'load', timeout: 300000 });
   await page.waitForTimeout(5000);
   await page.evaluate(() => window.__skipSplash?.());
   await page.waitForTimeout(3500);
+  // Note: do NOT click the canvas here. A click requests pointer lock, and a
+  // pointer-locked headless page never finishes a screenshot. Key events also
+  // need the page focused, which `bringToFront` gives without the lock.
+  await page.bringToFront();
 }
 
 /** Reject solid-black / tiny stills so fenjiao cannot slip through again. */
@@ -384,7 +389,7 @@ async function shootNightStreet() {
 }
 
 // ── Optional: hero / door / night (skipped when ONLY=interiors|poly) ─────────
-if (ONLY === 'all') {
+if (ONLY === 'all' || ONLY === 'hero') {
   console.log('hero poses');
   await goto('t=0.45&hud=0&hero=1&mixer=0.55');
   await page.evaluate(() => window.__game?.teleport?.(0, -20, 0));
@@ -399,10 +404,25 @@ if (ONLY === 'all') {
   await shot('hero-run');
 
   await poseClip('jump', 0.3);
+  // A real jump, caught near the top. Setting the avatar's height by hand does
+  // not survive the frame — the physics owns that position — and a staged
+  // float would be a picture of a jump rather than a jump. So: launch him,
+  // then watch the height and fire when he is actually up there. The sandbox
+  // runs at a fraction of a frame per second, which makes the apex last
+  // long enough to catch rather than making it impossible to catch.
   await page.evaluate(() => {
-    window.__nn.player.y = 1.15;
+    const pl = window.__nn.player;
+    pl.vy = 6.2;
+    pl.grounded = false;
   });
-  await faceCam(2.9, 1.85, 1.4);
+  let apex = 0;
+  for (let i = 0; i < 200; i++) {
+    await page.waitForTimeout(400);
+    const y = await page.evaluate(() => window.__nn.player.y);
+    if (y > 0.75) { apex = y; break; }
+  }
+  console.log('  jump apex height:', apex.toFixed(2));
+  await faceCam(2.9, 1.85, 1.4 + apex * 0.5);
   await shot('hero-jump');
 
   await poseClip('attack-melee-right', 0.4);
@@ -416,7 +436,7 @@ if (ONLY === 'all') {
   await faceCam(2.5, 1.35, 0.9);
   await shot('hero-pickup');
 
-  await shootFujiDoor();
+  if (ONLY === 'all') await shootFujiDoor();
 }
 
 if (ONLY === 'poly') {

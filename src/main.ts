@@ -1076,6 +1076,7 @@ declare global {
       peds: Pedestrians;
       city: typeof city;
       teleport(x: number, z: number, heading?: number): void;
+      freeze(on: boolean): void;
       interiorProps(): { prop: string; shopId: string; x: number; z: number; w: number; d: number; h: number }[];
       readonly interior: boolean;
       readonly camDist: number;
@@ -1120,6 +1121,18 @@ window.__game = {
   },
   get paused() {
     return loop.isPaused();
+  },
+  /**
+   * Freeze the simulation without opening the pause menu.
+   *
+   * `setPaused` is the player's pause and it brings up the menu with it, which
+   * is exactly what a capture rig does not want — the menu would be in the
+   * shot. This stops the world where it is and leaves the screen alone, so a
+   * still can be composed of something the physics would not otherwise allow,
+   * like a character held in mid-air.
+   */
+  freeze(on: boolean) {
+    loop.setPaused(on);
   },
   get radioReady() {
     return radio !== null; // manifest fetched + tuner built
