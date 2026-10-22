@@ -114,9 +114,10 @@ describe('中山路 layout', () => {
     const street = city.lanes.filter((l) => l.axis === 'z');
     expect(street.length).toBe(2);
     for (const lane of street) {
-      // Inside the carriageway, clear of the columns at the kerb.
-      expect(Math.abs(lane.fixed)).toBeGreaterThan(1);
-      expect(Math.abs(lane.fixed)).toBeLessThan(3);
+      // At the kerb: the traffic keeps to the sides and the middle of the
+      // street is left to walk down.
+      expect(Math.abs(lane.fixed)).toBeGreaterThan(2.6);
+      expect(Math.abs(lane.fixed)).toBeLessThan(3.6);
       // It is an old street, not a boulevard: the cars creep.
       expect(lane.cruise ?? 99).toBeLessThan(8);
       // And they wrap inside the street rather than driving off the end.
@@ -127,6 +128,17 @@ describe('中山路 layout', () => {
       expect(Math.abs(lane.fixed)).toBeGreaterThan(150);
     }
     expect(Math.abs(city.carSpawn?.z ?? 0)).toBeGreaterThan(150);
+  });
+
+  it('leaves a clear walking lane down the middle of the carriageway', () => {
+    // Nothing may stand in the middle of the street: the cars keep to the
+    // kerb lanes, the stalls are under the arcade, and the people walk here.
+    for (const s of city.stalls) {
+      expect(Math.abs(s.x)).toBeGreaterThan(4);
+    }
+    for (const lane of city.lanes.filter((l) => l.axis === 'z')) {
+      expect(Math.abs(lane.fixed)).toBeGreaterThan(2.6);
+    }
   });
 
   it('drops the old districts', () => {

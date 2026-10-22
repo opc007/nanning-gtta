@@ -204,9 +204,16 @@ function arcadeSlabs(): THREE.BufferGeometry[] {
   const h = ARCADE_RAISE;
   const span = (z0: number, z1: number, side: -1 | 1): void => {
     const cx = side * (STREET_HALF + ARCADE_DEPTH / 2);
-    parts.push(box(ARCADE_DEPTH, h, z1 - z0, cx, y, (z0 + z1) / 2, 0x6d7370));
+    // No ground-floor mass. A 骑楼 is a covered walkway: the upper floor
+    // overhangs the pavement and stands on the columns, and the ground under
+    // it is open. It used to be a solid block, which meant the covered
+    // walkway could not be walked in, the parked e-bikes had nowhere to go
+    // except the traffic lane, and the night market had to stand in the
+    // middle of the road to fit its three-metre stalls.
+    void y;
+    void h;
     // Lip at the carriageway edge so the 15 cm step reads from the street.
-    parts.push(box(0.08, h, z1 - z0, side * STREET_HALF, y, (z0 + z1) / 2, 0x8a8478));
+    parts.push(box(0.08, ARCADE_RAISE, z1 - z0, side * STREET_HALF, ARCADE_RAISE / 2, (z0 + z1) / 2, 0x8a8478));
     // Ceiling, then the upper floors that actually cover the walkway.
     parts.push(box(ARCADE_DEPTH + 0.12, 0.22, z1 - z0, cx, COL_H, (z0 + z1) / 2, 0x7c756c));
     parts.push(box(ARCADE_DEPTH, 3.5, z1 - z0, cx - side * 0.04, COL_H + 0.22 + 1.75, (z0 + z1) / 2, 0x8a8680));
@@ -551,7 +558,7 @@ async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<v
     if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
     // Kerb on the same side as the shop (nx points from shop into the street,
     // so -nx * STREET_HALF is the near kerb).
-    const x = -unit.nx * (STREET_HALF - 0.75);
+    const x = -unit.nx * (STREET_HALF + 1.15);
     // Parked along +Z; flip 180° on the west kerb so noses face the same way.
     const heading = unit.nx < 0 ? Math.PI / 2 : -Math.PI / 2;
     spots.push({ x, z: unit.z - 1.1, heading });
@@ -559,7 +566,9 @@ async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<v
   }
   // Extra pairs along both kerbs so mid-street night framing is not empty.
   for (const side of [-1, 1] as const) {
-    const x = side * (STREET_HALF - 0.75);
+    // Under the arcade, not in the traffic lane: the columns are at the
+    // kerb line and a scooter parked at the kerb was standing inside them.
+    const x = side * (STREET_HALF + 1.15);
     const heading = side > 0 ? Math.PI / 2 : -Math.PI / 2;
     for (let z = STREET_Z0 + 25; z < STREET_Z1 - 25; z += 45) {
       spots.push({ x, z: z - 0.9, heading });

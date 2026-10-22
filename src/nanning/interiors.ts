@@ -170,12 +170,22 @@ function addProp(
 }
 
 function stoolsAround(list: LocalProp[], u: number, v: number, towardAisle: number): void {
-  const s = 0.58;
-  // Two on the aisle side, two on the flanks. The aisle side keeps a corridor at v=0.
+  // A table is 0.8 m across and a stool 0.34 m, so a stool whose centre sits
+  // closer than about 0.6 m to the table's is already inside it. They used to
+  // sit at 0.17 m — inside the table's own footprint — and the overlap test
+  // threw some of them away, which is how a stool ended up embedded in a
+  // table leg.
+  // 0.60 m: the table's half-width is 0.40 and the stool's is 0.17, so this
+  // is the closest a stool can stand and still read as a separate thing. They
+  // used to sit at 0.17 m — inside the table's own footprint, which is the
+  // stool in the table leg the review kept catching.
+  const s = 0.6;
+  // One on the aisle side, three on the flanks. The aisle side keeps a
+  // corridor at v=0.
   addProp(list, 'stool', u, v - Math.sign(towardAisle || 1) * s, true);
   addProp(list, 'stool', u + s, v, true);
-  addProp(list, 'stool', u - s * 0.3, v + Math.sign(v || 1) * s, true);
-  addProp(list, 'stool', u + s * 0.85, v + Math.sign(v || 1) * (s * 0.2), true);
+  addProp(list, 'stool', u - s, v, true);
+  addProp(list, 'stool', u, v + Math.sign(v || 1) * s, true);
 }
 
 /** Wall board on the back (or a side, if the back is a grill). Not a step. */

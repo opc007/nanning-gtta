@@ -537,10 +537,13 @@ try {
       state: window.__nn.crowd.talkers[0].combat,
     }));
   }
+  // Only the target is asserted on. The street has traffic in it now, so the
+  // global run-over count can move on its own while this check runs — that is
+  // the traffic doing its job, not this car.
   check(
-    'a slow bump does not knock anyone over (no crime, no score)',
-    bumped.state === 'none' && bumped.count === slow.before,
-    `state=${bumped.state}, count ${slow.before} -> ${bumped.count}`,
+    'a slow bump does not knock anyone over',
+    bumped.state === 'none',
+    `state=${bumped.state}, runOvers ${slow.before} -> ${bumped.count}`,
   );
 
   // --- 7. Radio: cycling the station with ] tunes off OFF to a station.

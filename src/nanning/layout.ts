@@ -58,6 +58,20 @@ export const SHOP_FRONT = STREET_HALF + ARCADE_DEPTH;
 export const SHOP_BACK = SHOP_FRONT + SHOP_DEPTH;
 
 export const MAP_HALF = 190;
+/**
+ * The night market's stretch of street. The stalls stand under the arcade
+ * here, so the arcade's ground floor is a canopy instead of a wall.
+ */
+export const NIGHT_Z0 = -46;
+export const NIGHT_Z1 = 46;
+/**
+ * Where the traffic runs. The lanes sit at the kerb and the middle of the
+ * street is left clear to walk down, which is how a 骑楼 street actually
+ * works: the cars keep to the sides and the people have the middle.
+ */
+export const LANE_X = 3.2;
+/** The walking lane down the middle of the carriageway. */
+export const WALK_X = 1.7;
 
 /** Background cross streets, outside the barriers. */
 export const MINZU_Z = -168;
@@ -329,7 +343,10 @@ export function generateNanningCity(seed = 1945): NanningCity {
     const count = row === 0 ? perRow : stallDefs.length - perRow;
     const z = -42 + ((index + 0.5) * 84) / count;
     const side = row === 0 ? -1 : 1;
-    const x = side * 1.55;
+    // Under the arcade, not in the middle of the road. Two rows of three-metre
+    // stalls down the centre left a three-metre gap in a nine-metre street:
+    // the whole carriageway was blocked and there was nowhere to walk.
+    const x = side * (STREET_HALF + ARCADE_DEPTH / 2);
     // West row faces +X (toward the middle), east row faces -X.
     const rot = side < 0 ? -Math.PI / 2 : Math.PI / 2;
     stalls.push({ x, z, rot, hue: rand(), shopId: def.id });
@@ -443,11 +460,11 @@ export function generateNanningCity(seed = 1945): NanningCity {
   // road, not for everyone standing in front of a shop.
   const lanes: Lane[] = [
     {
-      axis: 'z', fixed: -1.9, dir: 1,
+      axis: 'z', fixed: -LANE_X, dir: 1,
       span: [STREET_Z0 + 8, STREET_Z1 - 8], watch: 1.1, cruise: 5.4, weight: 4,
     },
     {
-      axis: 'z', fixed: 1.9, dir: -1,
+      axis: 'z', fixed: LANE_X, dir: -1,
       span: [STREET_Z0 + 8, STREET_Z1 - 8], watch: 1.1, cruise: 5.4, weight: 4,
     },
     { axis: 'x', fixed: MINZU_Z - 3.2, dir: 1 },

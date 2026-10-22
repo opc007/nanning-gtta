@@ -421,9 +421,9 @@ if (!HUD_ON) {
 }
 
 let mode: Mode = nanning ? 'foot' : 'driving';
-// Where a person stands on a street with traffic in it: at the kerb, just
-// inside the carriageway, clear of the lane the cars use.
-const KERB_X = 3.3;
+// Where a person stands on a street with traffic in it: the walking lane
+// down the middle of the carriageway, clear of the lanes the cars use.
+const KERB_X = 1.7;
 
 // The first car is spawned as the player's. On the food street you start on
 // foot beside it, so it has to be enterable (nearest() ignores playerIndex).
@@ -442,7 +442,11 @@ const MAX_HEALTH = 100;
 // e-bike's saddle are close enough that one number reads correctly for both;
 // the alternative is plumbing a per-vehicle height through the pose for a
 // difference nobody can see at chase-camera distance.
-const SEAT_Y = 0.82;
+// The rider's origin is at the model's feet. The 'sit' clip in this model is
+// a sitting-on-the-ground pose — head down by the hips — so it cannot be a
+// car seat: the driver's head ended up at the car's belt line, buried in the
+// bodywork. The model also ships a 'drive' clip, which is the one for this.
+const SEAT_Y = 0.3;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
 const DAMAGE_PER_SPEED = 5; // health lost per m/s of impact
 const KNOCKBACK = 1.6;
@@ -970,7 +974,10 @@ function render(alpha: number, frameDt: number): void {
   // top of the car, turned with it, sitting.
   const ridingPose = mode === 'driving' ? carPoseRef : null;
   if (ridingPose) {
-    avatar.position.set(ridingPose.x, SEAT_Y, ridingPose.z);
+    // A seat sits behind the middle of the car, and the rider faces forward.
+    const fx = Math.cos(ridingPose.heading);
+    const fz = -Math.sin(ridingPose.heading);
+    avatar.position.set(ridingPose.x - fx * 0.35, SEAT_Y, ridingPose.z - fz * 0.35);
     avatar.rotation.y = ridingPose.heading;
   } else {
     avatar.position.set(ax, ay, az);
@@ -982,8 +989,8 @@ function render(alpha: number, frameDt: number): void {
     const liveRig = clipRig ?? avatarRig!;
     if (ridingPose) {
       // The procedural fallback rig has no clip library, so it has nothing to
-      // sit with — only the Kenney clip character does.
-      clipRig?.play('sit', 0.25);
+      // drive with — only the Kenney clip character does.
+      clipRig?.play('drive', 0.25);
     } else {
       liveRig.update(player.speed, frameDt, {
         state: player.state === 'air' ? 'air' : player.state,

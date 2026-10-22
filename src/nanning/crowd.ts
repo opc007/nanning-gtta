@@ -73,6 +73,13 @@ const CROWD_SWING_COOLDOWN = 1.35; // seconds between swings
 const CROWD_FIGHT_BREAK = 14; // if you get this far away, they give up
 const CROWD_FIGHT_GIVE_UP = 9; // no brawl lasts forever
 const GRAVITY = 18;
+/**
+ * How close two people may stand. A body is about 0.35 m across, so anything
+ * under 0.7 m is already overlapping; they used to be dropped at random with
+ * no minimum at all, and the knots came out with people standing inside one
+ * another.
+ */
+const CROWD_GAP = 0.85;
 
 /** Draw a line of text into a rounded bubble sprite. */
 function makeBubble(): THREE.Sprite {
@@ -202,13 +209,14 @@ export class Crowd {
     // how a real pavement looks and what makes the crowd answer back.
     let placed = 0;
     while (placed < ambient) {
-      // People stand at the kerb, in front of the shops, not in the middle
-      // of the road: the middle is where the traffic goes.
-      const anchorX = (placed % 2 === 0 ? -1 : 1) * (3.5 + rnd() * 0.6);
+      // People walk down the middle of the street. The traffic keeps to the
+      // kerb lanes, and the middle is the walking lane — the way a 骑楼
+      // street is used, and the way it reads.
+      const anchorX = (placed % 2 === 0 ? -1 : 1) * (1.15 + rnd() * 0.55);
       const anchorZ = -140 + (placed + 0.5) * (280 / Math.max(1, ambient));
       const knot = Math.min(ambient - placed, 2 + Math.floor(rnd() * 3));
       for (let k = 0; k < knot; k++) {
-        const jx = anchorX + (rnd() - 0.5) * 0.7;
+        const jx = anchorX + (rnd() - 0.5) * 0.55;
         const jz = anchorZ + (rnd() - 0.5) * 2.8;
         this.place(scene, jx, jz, NPC_POOL[Math.floor(rnd() * NPC_POOL.length)], rnd() * Math.PI * 2, {
           name: '', amount: 0, paid: true, t: rnd() * 8,
@@ -226,6 +234,10 @@ export class Crowd {
     scene: THREE.Scene, x: number, z: number, file: string, facing: number,
     talker: { name: string; amount: number; paid: boolean; t: number },
   ): void {
+    // Find a spot clear of everyone already standing here. A knot of people
+    // dropped at random has people inside one another; a knot of people who
+    // can see each other is a group.
+    [x, z] = this.clearSpot(x, z);
     const g = new THREE.Group();
     g.position.set(x, 0, z);
     g.rotation.y = facing;
@@ -529,6 +541,61 @@ export class Crowd {
     }
   }
 
+  /**
+   * A spot at least a body's width from everybody else, searching outwards
+   * from the one that was asked for.
+   */
+  private clearSpot(x: number, z: number): [number, number] {
+    const clear = (px: number, pz: number): boolean => {
+      for (const t of this.talkers) {
+        if (Math.hypot(t.x - px, t.z - pz) < CROWD_GAP) return false;
+      }
+      return true;
+    };
+    if (clear(x, z)) return [x, z];
+    for (let r = 0.4; r <= 2.4; r += 0.4) {
+      for (let a = 0; a < 8; a++) {
+        const ang = (a / 8) * Math.PI * 2;
+        const px = x + Math.cos(ang) * r;
+        const pz = z + Math.sin(ang) * r;
+        if (clear(px, pz)) return [px, pz];
+      }
+    }
+    return [x, z];
+  }
+
+  /**
+   * Keep people out of each other, and out of the player. Two bodies in the
+   * same place is the oldest way to make a street look broken.
+   */
+  private separate(px: number, pz: number): void {
+    for (let i = 0; i < this.talkers.length; i++) {
+      const a = this.talkers[i];
+      for (let j = i + 1; j < this.talkers.length; j++) {
+        const b = this.talkers[j];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= CROWD_GAP || d < 1e-4) continue;
+        const push = (CROWD_GAP - d) * 0.5;
+        const nx = dx / d;
+        const nz = dz / d;
+        a.x -= nx * push;
+        a.z -= nz * push;
+        b.x += nx * push;
+        b.z += nz * push;
+      }
+      // The player is a body too.
+      const dx = a.x - px;
+      const dz = a.z - pz;
+      const d = Math.hypot(dx, dz);
+      if (d < CROWD_GAP && d > 1e-4) {
+        a.x += (dx / d) * (CROWD_GAP - d);
+        a.z += (dz / d) * (CROWD_GAP - d);
+      }
+    }
+  }
+
   /** The nearest unpaid debt target, or null. */
   nearestDebtor(px: number, pz: number, max = 3.4): Talker | null {
     let best: Talker | null = null;
@@ -577,6 +644,8 @@ export class Crowd {
     // Combat first: someone who is being hit, carried or is in a fight is not
     // also murmuring to themselves.
     for (const t of this.talkers) this.stepCombat(t, dt, px, pz, heading);
+    // And nobody stands inside anybody else.
+    this.separate(px, pz);
     const movers: CrowdMover[] = this.talkers.map((t) => {
       const v = t.group.userData.vel as THREE.Vector3 | undefined;
       return {

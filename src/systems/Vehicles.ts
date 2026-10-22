@@ -74,6 +74,55 @@ const PED_STOP_GAP = 5; // distance ahead of a pedestrian a car aims to stop
 const PED_BRAKE_DECEL = 7; // braking authority used to compute a safe speed
 const PED_BRAKE_RATE = 5; // how hard the car decelerates toward that safe speed
 const CAR_GAP = 6.5; // metres a car keeps to the one in front of it
+/**
+ * The vehicles that drive on the street. The full list includes a 4.5-tonne
+ * hauler and a box van, and a hauler on a nine-metre 骑楼 street is both
+ * wrong and — being the flat black thing with a bed — the thing the review
+ * kept calling an unfinished box.
+ */
+const TRAFFIC_PROFILES = PROFILES.filter(
+  (p) => p.shapeId === 'sedan' || p.shapeId === 'compact' || p.shapeId === 'ebike',
+);
+/** A car's footprint: it is four metres long and not two metres round. */
+const CAR_HALF_LEN = 2.05;
+const CAR_HALF_WID = 0.92;
+
+/**
+ * Do two cars overlap, as boxes rather than as circles?
+ *
+ * The circle test used a 1.2 m radius, so it said two four-metre cars were
+ * clear with their centres 2.4 m apart — which is the length of one car. A
+ * green one drove straight into a brown one. Boxes, each in its own frame,
+ * do not have that problem.
+ */
+function obbOverlap(a: Car, b: Car): { nx: number; nz: number; depth: number } | null {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const axes: [number, number][] = [
+    [Math.cos(a.heading), -Math.sin(a.heading)],
+    [Math.sin(a.heading), Math.cos(a.heading)],
+    [Math.cos(b.heading), -Math.sin(b.heading)],
+    [Math.sin(b.heading), Math.cos(b.heading)],
+  ];
+  const radius = (c: Car, ux: number, uz: number): number =>
+    CAR_HALF_LEN * Math.abs(ux * Math.cos(c.heading) - uz * Math.sin(c.heading)) +
+    CAR_HALF_WID * Math.abs(ux * Math.sin(c.heading) + uz * Math.cos(c.heading));
+  let minDepth = Infinity;
+  let nx = 0;
+  let nz = 0;
+  for (const [ux, uz] of axes) {
+    const dist = dx * ux + dz * uz;
+    const overlap = radius(a, ux, uz) + radius(b, ux, uz) - Math.abs(dist);
+    if (overlap <= 0) return null; // a separating axis: they are clear
+    if (overlap < minDepth) {
+      minDepth = overlap;
+      const s = dist < 0 ? -1 : 1;
+      nx = ux * s;
+      nz = uz * s;
+    }
+  }
+  return { nx, nz, depth: minDepth };
+}
 const PED_REACH = CAR_RADIUS + 0.5; // contact distance for running a pedestrian over
 
 const POLICE_COLOR = 0x12131c;
@@ -150,14 +199,14 @@ export class Vehicles {
       const x = lane.axis === 'x' ? along : lane.fixed;
       const z = lane.axis === 'z' ? along : lane.fixed;
       const color = rng.pick(TRAFFIC_COLORS);
-      const profile = rng.pick(PROFILES);
+      const profile = rng.pick(TRAFFIC_PROFILES);
       const cruise = lane.cruise ?? rng.range(10, 22);
       this.spawn(scene, makeBody(color, profile.shapeId), color, profile, x, z, 0, 'ai', lane, cruise);
     }
 
     for (const spot of city.parkingSpots) {
       const color = rng.pick(TRAFFIC_COLORS);
-      const profile = rng.pick(PROFILES);
+      const profile = rng.pick(TRAFFIC_PROFILES);
       this.spawn(scene, makeBody(color, profile.shapeId), color, profile, spot.x, spot.z, spot.heading, 'parked', null, 0);
     }
 
@@ -614,7 +663,7 @@ export class Vehicles {
         const a = this.cars[i];
         const b = this.cars[j];
         if (!a.active || !b.active) continue;
-        const o = circleOverlap(a.x, a.z, b.x, b.z, CAR_RADIUS * 2);
+        const o = obbOverlap(a, b);
         if (!o) continue;
 
         // Separate mass-biased: the lighter car gives more ground.
