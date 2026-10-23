@@ -462,20 +462,22 @@ export class Crowd {
       // them.
       const fx = Math.cos(heading);
       const fz = -Math.sin(heading);
-      const rx = -fz;
-      const rz = fx;
       // Smaller, and behind the shoulder rather than on top of it: a full
       // size chibi is 1.64 m, so carried flat his boots end up buried in the
       // carrier's neck. At three-quarter size, slung down the back, the
       // boots hang behind the carrier and the head clears the shoulder.
       t.group.scale.setScalar(0.72);
-      // Across the shoulders, the way you would actually carry somebody: the
-      // body lies along the line of the shoulders with the head out past one
-      // of them and the boots past the other. It used to be centred on the
-      // carrier, which put the carried person's head straight on top of the
-      // carrier's own — the two heads stacked, and the body looked upside
-      // down.
-      t.group.position.set(px + rx * 0.42 - fx * 0.12, 1.3, pz + rz * 0.42 - fz * 0.12);
+      // The model's origin is at its FEET, and that is the whole difficulty.
+      // Put the origin where the body is carried and you have put the feet
+      // on the carrier's head; two rounds ago that is exactly what happened
+      // and the legs came up through their scalp.
+      //
+      // So the body lies across the line of the shoulders with the origin
+      // (the feet) well off to one side and the head out past the other
+      // shoulder. Neither end is anywhere near the carrier's head or neck.
+      const rx = -fz;
+      const rz = fx;
+      t.group.position.set(px + rx * 0.55, 1.24, pz + rz * 0.55);
       t.group.rotation.set(0, heading, -1.35);
       t.x = t.group.position.x;
       t.z = t.group.position.z;
