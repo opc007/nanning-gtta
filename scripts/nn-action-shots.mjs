@@ -29,7 +29,7 @@ p.on('pageerror', (e) => errs.push(e.message.split('\n')[0]));
 await p.goto(URL, { waitUntil: 'load' });
 await p.waitForTimeout(6000);
 await p.evaluate(() => window.__skipSplash?.());
-await p.waitForFunction(() => !!window.__nn?.crowd, null, { timeout: 300000 });
+await p.waitForFunction(() => !!window.__nn?.crowd, null, { timeout: 600000 });
 await p.waitForTimeout(6000);
 
 /** A wide, fixed camera: the follow camera is so close that a fight
@@ -81,10 +81,15 @@ await p.evaluate(() => {
 });
 await p.waitForTimeout(3000);
 
-// Three punches floor them, and then they get up and hit back.
+// Three punches floor them, and then they get up and hit back. The key is
+// pressed several times per blow: the headless renderer runs at about a
+// frame a second, and a key pressed between two frames is never seen.
 for (let i = 0; i < 3; i += 1) {
-  await p.keyboard.press('KeyJ');
-  await p.waitForTimeout(2200);
+  for (let k = 0; k < 4; k += 1) {
+    await p.keyboard.press('KeyJ');
+    await p.waitForTimeout(900);
+  }
+  await p.waitForTimeout(1500);
 }
 await p.waitForTimeout(3000);
 const afterPunch = await p.evaluate(() => {
@@ -99,16 +104,19 @@ const afterPunch = await p.evaluate(() => {
 console.log('AFTER PUNCH', JSON.stringify(afterPunch));
 await wide(7.6, 3.1, 1.1);
 await p.waitForTimeout(1200);
-await p.screenshot({ path: `${OUT}/task7/brawl-crowd.png`, timeout: 300000 });
+await p.screenshot({ path: `${OUT}/task7/brawl-crowd.png`, timeout: 600000 });
 console.log('  → brawl-crowd');
 
 // One more, so the shot shows a fight rather than a pile-up: the one who
 // got hit turns on the one who hit them.
-await p.keyboard.press('KeyJ');
-await p.waitForTimeout(4000);
+for (let k = 0; k < 4; k += 1) {
+  await p.keyboard.press('KeyJ');
+  await p.waitForTimeout(900);
+}
+await p.waitForTimeout(3000);
 await wide(6.4, 2.8, -1.2);
 await p.waitForTimeout(1200);
-await p.screenshot({ path: `${OUT}/task7/brawl-punch.png`, timeout: 300000 });
+await p.screenshot({ path: `${OUT}/task7/brawl-punch.png`, timeout: 600000 });
 console.log('  → brawl-punch');
 
 // ── 2. Carry a person ───────────────────────────────────────────────────────
@@ -117,12 +125,38 @@ const carried = await p.evaluate(() => {
   const arr = c.talkers ?? c.people ?? [];
   const n = window.__nn;
   const pl = n.player;
-  const t = arr.find((x) => x.combat !== 'down' && x.combat !== 'carried');
+  // The loneliest person on the street. Carrying somebody out of the middle
+  // of a crowd puts a bystander in every frame, and the picture stops being
+  // about the carry.
+  let t = null;
+  let loneliest = -1;
+  for (const x of arr) {
+    if (x.combat === 'down' || x.combat === 'carried') continue;
+    let nearest = 99;
+    for (const o of arr) {
+      if (o === x) continue;
+      nearest = Math.min(nearest, Math.hypot(o.x - x.x, o.z - x.z));
+    }
+    if (nearest > loneliest) { loneliest = nearest; t = x; }
+  }
   if (!t) return { ok: false };
-  pl.x = t.x + 1.2;
-  pl.z = t.z;
-  pl.heading = Math.atan2(-(t.z - pl.z), t.x - pl.x);
-  return { ok: true };
+  // Stand next to them, but make sure nobody else is within four metres:
+  // the point of this picture is the carry, and a passer-by in the frame
+  // turns it into "three people in a heap" no matter how good the pose is.
+  let best = null;
+  for (let a = 0; a < 12 && !best; a += 1) {
+    const ang = (a / 12) * Math.PI * 2;
+    const px = t.x + Math.cos(ang) * 1.3;
+    const pz = t.z + Math.sin(ang) * 1.3;
+    const others = arr.filter((o) => o !== t && Math.hypot(o.x - px, o.z - pz) < 4);
+    if (!others.length) best = { px, pz };
+  }
+  const px = best ? best.px : t.x + 1.3;
+  const pz = best ? best.pz : t.z;
+  pl.x = px;
+  pl.z = pz;
+  pl.heading = Math.atan2(-(t.z - pz), t.x - px);
+  return { ok: true, clear: !!best };
 });
 console.log('carry setup', JSON.stringify(carried));
 await p.waitForTimeout(2500);
@@ -143,9 +177,9 @@ for (let i = 0; i < 8; i += 1) {
   if (carryState.carrying) break;
 }
 console.log('CARRY', JSON.stringify(carryState));
-await wide(6.8, 2.7, 1.4);
+await wide(5.0, 2.2, 1.2);
 await p.waitForTimeout(1200);
-await p.screenshot({ path: `${OUT}/task7/carry.png`, timeout: 300000 });
+await p.screenshot({ path: `${OUT}/task7/carry.png`, timeout: 600000 });
 console.log('  → carry');
 
 // ── 3. Throw them ───────────────────────────────────────────────────────────
@@ -153,7 +187,7 @@ await p.keyboard.press('KeyJ');
 await p.waitForTimeout(4500);
 await wide(8.4, 3.4, 0.6);
 await p.waitForTimeout(1200);
-await p.screenshot({ path: `${OUT}/task8/throw-knockdown.png`, timeout: 300000 });
+await p.screenshot({ path: `${OUT}/task8/throw-knockdown.png`, timeout: 600000 });
 console.log('  → throw-knockdown');
 const thrown = await p.evaluate(() => {
   const c = window.__nn.crowd;

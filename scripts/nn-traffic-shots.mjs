@@ -61,13 +61,22 @@ const street = await p.evaluate(() => {
     if (n2 > bestN) { bestN = n2; bestZ = c.z; }
   }
   const pl = n.player;
+  // Put the player in the clear lane, but not inside a car. Dropped on top of
+  // one, the protagonist stands in the bodywork with his head out of the
+  // roof, and the picture reads as a person clipping through a vehicle.
   pl.x = 1.7;
   pl.z = bestZ + 7;
+  for (let dz = 0; dz < 40; dz += 1.5) {
+    for (const cand of [bestZ + 7 + dz, bestZ + 7 - dz]) {
+      const busy = cars.some((c) => Math.hypot(c.x - 1.7, c.z - cand) < 3.2);
+      if (!busy) { pl.z = cand; dz = 99; break; }
+    }
+  }
   // Eye level down the carriageway: the traffic in both kerb lanes, the
   // arcade open on both sides, and nobody standing in a traffic lane.
   globalThis.freezeCam = true;
-  n.camera.position.set(1.7, 2.6, bestZ + 21);
-  n.camera.lookAt(1.7, 1.1, bestZ - 16);
+  n.camera.position.set(1.7, 2.6, pl.z + 14);
+  n.camera.lookAt(1.7, 1.1, pl.z - 16);
   return { bestZ, bestN, cars: cars.length };
 });
 console.log('street', JSON.stringify(street));

@@ -65,14 +65,18 @@ describe('Crowd — street rules', () => {
     expect(b.combat).toBe('down');
   });
 
-  it('a carried person is held in front of the carrier', () => {
+  it('a carried person is carried over the shoulder', () => {
     const crowd = makeCrowd(12);
     const t = crowd.talkers[0];
     crowd.targets()[0].grab!();
     crowd.update(1 / 30, 5, 7, 0, 0, 0);
-    // Facing +X with heading 0, so the person is 0.85 m ahead of the carrier.
-    expect(t.group.position.x).toBeGreaterThan(5.5);
-    expect(t.group.position.z).toBeCloseTo(7, 1);
-    expect(t.group.position.y).toBeCloseTo(1.05, 2);
+    // Facing +X with heading 0. The person goes over the shoulder: beside
+    // and just behind the carrier, at head height, and the body is tipped
+    // across them rather than held out in front like a parcel.
+    expect(t.group.position.x).toBeGreaterThan(4.7);
+    expect(t.group.position.x).toBeLessThan(5.1);
+    expect(t.group.position.z).toBeLessThan(6.9);
+    expect(t.group.position.y).toBeCloseTo(1.18, 2);
+    expect(t.group.rotation.z).toBeLessThan(-0.9);
   });
 });

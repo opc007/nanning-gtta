@@ -252,10 +252,14 @@ function layoutFor(template: InteriorTemplate, depth: number, width: number): Lo
     addProp(list, 'case', 1.5, -half * 0.75, false, { h: 1.05 });
     addProp(list, 'table-high', 2.5, side * 0.55);
     addProp(list, 'table-high', 4.3, -side * 0.35);
-    addProp(list, 'stool-high', 2.5, side * 0.55 - 0.55, true);
-    addProp(list, 'stool-high', 2.5 + 0.5, side * 0.55, true);
-    addProp(list, 'stool-high', 4.3, -side * 0.35 + 0.55, true);
-    addProp(list, 'stool-high', 4.3 - 0.5, -side * 0.35, true);
+    // The high table is 0.7 m across and the stool 0.32, so a stool whose
+    // centre is 0.5 m from the table's is already inside its own footprint —
+    // that is the pink stool through the table's side panel. 0.62 m clears
+    // it with a hand's width to spare.
+    addProp(list, 'stool-high', 2.5, side * 0.55 - 0.62, true);
+    addProp(list, 'stool-high', 2.5 + 0.62, side * 0.55, true);
+    addProp(list, 'stool-high', 4.3, -side * 0.35 + 0.62, true);
+    addProp(list, 'stool-high', 4.3 - 0.62, -side * 0.35, true);
     addMenu(list, depth, width, 0);
   } else {
     addProp(list, 'counter', back, 0, false, { d: counterW, w: 0.7 });

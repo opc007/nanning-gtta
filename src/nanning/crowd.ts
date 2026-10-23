@@ -79,7 +79,15 @@ const GRAVITY = 18;
  * no minimum at all, and the knots came out with people standing inside one
  * another.
  */
-const CROWD_GAP = 1.05;
+/**
+ * How close two people may stand, centre to centre.
+ *
+ * A body is about 0.55 m across — these are chibi figures, a metre of head
+ * on a metre of body — so 1.05 m of centre-to-centre leaves barely a hand's
+ * width of daylight between two people and the street reads as one clot.
+ * 1.45 m puts real air between them.
+ */
+const CROWD_GAP = 1.45;
 
 /** Draw a line of text into a rounded bubble sprite. */
 function makeBubble(): THREE.Sprite {
@@ -447,11 +455,17 @@ export class Crowd {
    */
   private stepCombat(t: Talker, dt: number, px: number, pz: number, heading: number): void {
     if (t.combat === 'carried') {
-      // Held out in front of the carrier, tilted.
+      // Over the shoulder, which is what picking somebody up means. It used
+      // to be held out in front at chest height, and in a picture it read as
+      // the player standing next to another person rather than carrying
+      // them.
       const fx = Math.cos(heading);
       const fz = -Math.sin(heading);
-      t.group.position.set(px + fx * 0.85, 1.05, pz + fz * 0.85);
-      t.group.rotation.set(-0.5, heading, 0.2);
+      const rx = -fz;
+      const rz = fx;
+      t.group.position.set(px - rx * 0.26 - fx * 0.1, 1.18, pz - rz * 0.26 - fz * 0.1);
+      // Draped: the body lies across the shoulders, head back.
+      t.group.rotation.set(0, heading, -1.15);
       t.x = t.group.position.x;
       t.z = t.group.position.z;
       return;
@@ -569,6 +583,12 @@ export class Crowd {
    * same place is the oldest way to make a street look broken.
    */
   private separate(px: number, pz: number): void {
+    // Several passes. One pass of pairwise pushes splits a pair, but a knot
+    // of three or four pushes the middle one both ways and it barely moves.
+    for (let pass = 0; pass < 4; pass += 1) this.separateOnce(px, pz);
+  }
+
+  private separateOnce(px: number, pz: number): void {
     for (let i = 0; i < this.talkers.length; i++) {
       const a = this.talkers[i];
       for (let j = i + 1; j < this.talkers.length; j++) {
@@ -584,14 +604,29 @@ export class Crowd {
         a.z -= nz * push;
         b.x += nx * push;
         b.z += nz * push;
+        // The body has to go with the number: the group carries the pose
+        // that gets drawn, and leaving it behind meant the picture never
+        // changed even when the separation worked.
+        if (a.combat !== 'carried') {
+          a.group.position.x = a.x;
+          a.group.position.z = a.z;
+        }
+        if (b.combat !== 'carried') {
+          b.group.position.x = b.x;
+          b.group.position.z = b.z;
+        }
       }
-      // The player is a body too.
+      // The player is a body too — except the one you are carrying, who is
+      // on your shoulder by definition.
+      if (a.combat === 'carried') continue;
       const dx = a.x - px;
       const dz = a.z - pz;
       const d = Math.hypot(dx, dz);
       if (d < CROWD_GAP && d > 1e-4) {
         a.x += (dx / d) * (CROWD_GAP - d);
         a.z += (dz / d) * (CROWD_GAP - d);
+        a.group.position.x = a.x;
+        a.group.position.z = a.z;
       }
     }
   }
@@ -644,8 +679,6 @@ export class Crowd {
     // Combat first: someone who is being hit, carried or is in a fight is not
     // also murmuring to themselves.
     for (const t of this.talkers) this.stepCombat(t, dt, px, pz, heading);
-    // And nobody stands inside anybody else.
-    this.separate(px, pz);
     const movers: CrowdMover[] = this.talkers.map((t) => {
       const v = t.group.userData.vel as THREE.Vector3 | undefined;
       return {
@@ -699,6 +732,11 @@ export class Crowd {
         this.say(t, '喂喂喂，唔好搞我哋铺头啊！', 2.4);
       }
     }
+    // And nobody stands inside anybody else. This has to be the last thing
+    // that happens: both `stepCrowd` and the copy-back above write positions
+    // straight onto the people, so separating them earlier was undone on the
+    // very next line and the street kept folding people into one another.
+    this.separate(px, pz);
   }
 
   render(camera: THREE.Camera): void {
