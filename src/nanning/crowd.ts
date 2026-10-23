@@ -475,10 +475,15 @@ export class Crowd {
       // So the body lies across the line of the shoulders with the origin
       // (the feet) well off to one side and the head out past the other
       // shoulder. Neither end is anywhere near the carrier's head or neck.
-      const rx = -fz;
-      const rz = fx;
-      t.group.position.set(px + rx * 0.55, 1.24, pz + rz * 0.55);
-      t.group.rotation.set(0, heading, -1.35);
+      // Which way is "across the shoulders"? The rider's model faces +X
+      // after the yaw, so +X is forward and +Z is to the right. Tipping the
+      // body about the FORWARD axis (X) swings it sideways onto the
+      // shoulders; tipping it about Z only rolls it, and the body ended up
+      // pointing straight ahead of the carrier instead of lying across them.
+      const rx = fz;
+      const rz = -fx;
+      t.group.position.set(px - rx * 0.45, 1.2, pz - rz * 0.45);
+      t.group.rotation.set(1.2, heading + 0.45, 0);
       t.x = t.group.position.x;
       t.z = t.group.position.z;
       return;

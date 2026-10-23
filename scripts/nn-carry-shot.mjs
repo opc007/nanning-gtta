@@ -90,6 +90,27 @@ for (let i = 0; i < 8 && !carrying; i += 1) {
 console.log('carrying', carrying);
 await p.waitForTimeout(2000);
 
+// Walk out of the way of the parked cars. The "press F to get in" prompt
+// over a bonnet in the middle of the picture is not a picture of a carry.
+const moved = await p.evaluate(() => {
+  const n = window.__nn;
+  const pl = n.player;
+  const v = n.vehicles;
+  for (let z = 0; z < 40; z += 2.5) {
+    for (const cand of [pl.z + z, pl.z - z]) {
+      const near = v.carStates().filter((c) => c.active && c.role !== 'police' &&
+        Math.hypot(c.x - pl.x, c.z - cand) < 5.5);
+      if (!near.length) {
+        pl.z = cand;
+        return { ok: true, z: +cand.toFixed(1) };
+      }
+    }
+  }
+  return { ok: false };
+});
+console.log('moved clear of the cars', JSON.stringify(moved));
+await p.waitForTimeout(3000);
+
 // From the side, at shoulder height. Shot from the front the carried body
 // is behind the carrier and reads as somebody crouching at their heels.
 await p.evaluate(() => {
