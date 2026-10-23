@@ -553,6 +553,15 @@ export function addDistrictClutter(scene: THREE.Scene, targets: ClutterTarget[],
   const acI = new THREE.InstancedMesh(acGeo, mat, Math.max(1, acCap));
   const tankI = new THREE.InstancedMesh(tankGeo, mat, Math.max(1, tankCap));
   const antI = new THREE.InstancedMesh(antGeo, mat, Math.max(1, antCap));
+  // None of this casts a shadow. It is all roof plant and wall-edge trim: air
+  // conditioners, water tanks, antennas, laundry, downpipes, window grilles.
+  // From the street you cannot see any of their shadows, and there are close to
+  // two hundred of them, each its own mesh, so they were the single largest
+  // thing the shadow pass had to draw every frame — about ninety thousand
+  // triangles of shadow nobody could see.
+  acI.castShadow = false;
+  tankI.castShadow = false;
+  antI.castShadow = false;
   const d = new THREE.Object3D();
   let count = 0;
 
@@ -591,7 +600,7 @@ export function addDistrictClutter(scene: THREE.Scene, targets: ClutterTarget[],
       const m = new THREE.Mesh(laundryGeometry(rnd), mat);
       m.position.set(t.x + (rnd() - 0.5) * (thick - 5), roofY, t.z + (rnd() - 0.5) * (run - 5));
       m.rotation.y = rnd() * Math.PI;
-      m.castShadow = true;
+      m.castShadow = false; // see the note on acI above
       scene.add(m);
       count++;
     }
@@ -604,7 +613,7 @@ export function addDistrictClutter(scene: THREE.Scene, targets: ClutterTarget[],
       0.2,
       alongX ? t.z + a : t.z - t.nz * off,
     );
-    pipe.castShadow = true;
+    pipe.castShadow = false; // a 4 cm pipe's shadow is not a thing
     scene.add(pipe);
     count++;
   }
@@ -615,7 +624,7 @@ export function addDistrictClutter(scene: THREE.Scene, targets: ClutterTarget[],
   acI.instanceMatrix.needsUpdate = true;
   tankI.instanceMatrix.needsUpdate = true;
   antI.instanceMatrix.needsUpdate = true;
-  acI.castShadow = tankI.castShadow = true;
+  // (castShadow was turned off above, along with the reason)
   scene.add(acI, tankI, antI);
   return count;
 }

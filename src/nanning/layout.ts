@@ -21,8 +21,25 @@ import { SHOPS, STALLS, type ShopDef, type StreetSection } from './data';
 export const STREET_Z0 = -150;
 export const STREET_Z1 = 150;
 /** Half-width of the open carriageway. Full width is 9 m. */
+// Carriageway half-width. The 2.4 m arcade that used to sit inside this width
+// reached more than a quarter of the way across the street, so the two canopies
+// met overhead and the road read as a tunnel you had to squeeze down. The
+// covered walkway is now 1.5 m — still a real 骑楼 arcade you can stand in — and
+// the street it leaves open is 10.8 m. STREET_HALF + ARCADE_DEPTH is held at 6.9
+// so the arcade's outer edge still lands on the shopfront line.
+// Carriageway half-width, set from the surveyed dimensions of real 骑楼 streets
+// rather than by eye. 北海老街 (珠海路) is recorded at 9 m wide, and the
+// planning literature puts 骑楼街道宽度 at "9 米左右" across the board, so that
+// is the number used here. Everything downstream — shopfront line, building
+// centres, clutter targets, signboards — derives from STREET_HALF + ARCADE_DEPTH,
+// so the whole street moves together when these two change.
 export const STREET_HALF = 4.5;
-export const ARCADE_DEPTH = 2.4;
+// Covered walkway depth. 梧州 gives the typical 骑楼人行道 as 2–3 m (with 4–5 m
+// outliers); 北海's colonnade is quoted at about 4 m, which suits its heavy Roman
+// columns. 3 m sits in the documented range and is what makes the arcade read as
+// somewhere you walk *inside* rather than a kerb awning — the earlier 1.5 m was
+// too shallow to stand in and left the street looking like an ordinary road.
+export const ARCADE_DEPTH = 3.0;
 export const ARCADE_RAISE = 0.15;
 export const SHOP_DEPTH = 8;
 export const ALLEY_WIDTH = 4;
@@ -41,6 +58,20 @@ export const SHOP_FRONT = STREET_HALF + ARCADE_DEPTH;
 export const SHOP_BACK = SHOP_FRONT + SHOP_DEPTH;
 
 export const MAP_HALF = 190;
+/**
+ * The night market's stretch of street. The stalls stand under the arcade
+ * here, so the arcade's ground floor is a canopy instead of a wall.
+ */
+export const NIGHT_Z0 = -46;
+export const NIGHT_Z1 = 46;
+/**
+ * Where the traffic runs. The lanes sit at the kerb and the middle of the
+ * street is left clear to walk down, which is how a 骑楼 street actually
+ * works: the cars keep to the sides and the people have the middle.
+ */
+export const LANE_X = 3.2;
+/** The walking lane down the middle of the carriageway. */
+export const WALK_X = 1.7;
 
 /** Background cross streets, outside the barriers. */
 export const MINZU_Z = -168;
@@ -312,7 +343,10 @@ export function generateNanningCity(seed = 1945): NanningCity {
     const count = row === 0 ? perRow : stallDefs.length - perRow;
     const z = -42 + ((index + 0.5) * 84) / count;
     const side = row === 0 ? -1 : 1;
-    const x = side * 1.55;
+    // Under the arcade, not in the middle of the road. Two rows of three-metre
+    // stalls down the centre left a three-metre gap in a nine-metre street:
+    // the whole carriageway was blocked and there was nowhere to walk.
+    const x = side * (STREET_HALF + ARCADE_DEPTH / 2);
     // West row faces +X (toward the middle), east row faces -X.
     const rot = side < 0 ? -Math.PI / 2 : Math.PI / 2;
     stalls.push({ x, z, rot, hue: rand(), shopId: def.id });
@@ -412,9 +446,27 @@ export function generateNanningCity(seed = 1945): NanningCity {
     streetlights.push({ x: STREET_HALF - 0.3, z });
   }
 
-  // ── Background lanes ONLY. No lane runs down 中山路. ─────────────────────
+  // ── Lanes. ───────────────────────────────────────────────────────────────
   // Local roads — never push onto a shared module array.
+  //
+  // 中山路 gets two lanes down the middle of its nine-metre carriageway. The
+  // old street was shared space — people on the kerb, bikes in the middle, a
+  // car now and then — and the traffic is what makes it a street rather than
+  // a corridor you can walk down without anything ever passing you.
+  //
+  // The cars creep (20 km/h), because it is a nine-metre street with a 骑楼
+  // arcade on both sides, not a boulevard. They watch a narrow corridor for
+  // people: on this street a car should brake for someone stepping into the
+  // road, not for everyone standing in front of a shop.
   const lanes: Lane[] = [
+    {
+      axis: 'z', fixed: -LANE_X, dir: 1,
+      span: [STREET_Z0 + 8, STREET_Z1 - 8], watch: 1.1, cruise: 5.4, weight: 4,
+    },
+    {
+      axis: 'z', fixed: LANE_X, dir: -1,
+      span: [STREET_Z0 + 8, STREET_Z1 - 8], watch: 1.1, cruise: 5.4, weight: 4,
+    },
     { axis: 'x', fixed: MINZU_Z - 3.2, dir: 1 },
     { axis: 'x', fixed: MINZU_Z + 3.2, dir: -1 },
     { axis: 'x', fixed: TAOYUAN_Z - 3.2, dir: 1 },

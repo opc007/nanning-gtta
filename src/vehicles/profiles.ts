@@ -71,7 +71,7 @@ export const PROFILES: CarProfile[] = [
 
 /** Police interceptor — fast and planted, what cruisers (and a carjacked cop car) drive. */
 export const INTERCEPTOR: CarProfile = {
-  id: 'crown-interceptor', manufacturer: 'Crown', model: 'Interceptor', class: 'interceptor', shapeId: 'sports', mass: 1700,
+  id: 'crown-interceptor', manufacturer: 'Crown', model: 'Interceptor', class: 'interceptor', shapeId: 'sedan', mass: 1700,
   ...tune({ enginePower: 15, maxSpeed: 94, turnRate: 2.9, gripNormal: 11 }),
 };
 

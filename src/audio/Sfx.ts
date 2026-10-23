@@ -14,6 +14,8 @@ export class Sfx {
   private master?: GainNode;
   private noise?: AudioBuffer;
   private engineOsc?: OscillatorNode;
+  /** Second voice an octave up, well down the mix. */
+  private engineOsc2?: OscillatorNode;
   private engineGain?: GainNode;
   private screechGain?: GainNode;
   private started = false;
@@ -37,19 +39,37 @@ export class Sfx {
     comp.connect(ctx.destination);
     this.noise = this.makeNoise(1);
 
-    // Engine: a sawtooth through a lowpass; frequency rises with speed.
+    // Engine. This was one sawtooth through a lowpass, which is all harmonic
+    // content and nothing else — it buzzed like a circular saw. A motor is a
+    // strong fundamental with a few soft partials on top, so the fundamental is
+    // a triangle now and a quieter sine sits an octave above it for the
+    // "something is running under there" cue. Both pass a gentle lowpass with a
+    // touch of resonance, which rounds off what is left of the edge.
     this.engineGain = ctx.createGain();
     this.engineGain.gain.value = 0;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 700;
+    lp.frequency.value = 520;
+    lp.Q.value = 1.6;
+
+    const harmGain = ctx.createGain();
+    harmGain.gain.value = 0.22; // the octave is a hint, not a second engine
+
     this.engineOsc = ctx.createOscillator();
-    this.engineOsc.type = 'sawtooth';
+    this.engineOsc.type = 'triangle';
     this.engineOsc.frequency.value = 50;
     this.engineOsc.connect(lp);
+
+    this.engineOsc2 = ctx.createOscillator();
+    this.engineOsc2.type = 'sine';
+    this.engineOsc2.frequency.value = 100;
+    this.engineOsc2.connect(harmGain);
+    harmGain.connect(lp);
+
     lp.connect(this.engineGain);
     this.engineGain.connect(this.master);
     this.engineOsc.start();
+    this.engineOsc2.start();
 
     // Tyre screech: looping noise through a resonant bandpass, gated by gain.
     this.screechGain = ctx.createGain();
@@ -86,7 +106,9 @@ export class Sfx {
     if (!this.ctx || !this.engineGain || !this.engineOsc) return;
     const t = this.ctx.currentTime;
     this.engineGain.gain.setTargetAtTime(Math.max(0, Math.min(1, volume)) * 0.06, t, 0.1);
-    this.engineOsc.frequency.setTargetAtTime(engineToneHz(speed01), t, 0.05);
+    const hz = engineToneHz(speed01);
+    this.engineOsc.frequency.setTargetAtTime(hz, t, 0.05);
+    this.engineOsc2?.frequency.setTargetAtTime(hz * 2, t, 0.05);
   }
 
   /** Master volume (0..1) from the options menu; applied live. */
@@ -111,6 +133,16 @@ export class Sfx {
 
   gib(): void {
     this.burst(0.18, 520, 0.32);
+  }
+  /** A fist connecting, or a fist meeting a table. Short, dry, unsatisfying. */
+  punch(): void {
+    this.burst(0.09, 210, 0.4);
+    this.burst(0.05, 1200, 0.2);
+  }
+  /** Timber railing going over: a short splintering crack, not a car wreck. */
+  crash(): void {
+    this.burst(0.3, 900, 0.5);
+    this.burst(0.16, 260, 0.34);
   }
   /** A car wreck: a low, long noise boom with a pitch-down thud under it. */
   explosion(): void {

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 /**
  * Vehicle bodies built by lofting cross-sections.
  *
@@ -76,6 +77,10 @@ export function loft(sections: Section[], seg = 16, cap = true): THREE.BufferGeo
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  // A UV set, all zeros. The paint has no map so nothing reads it, but the
+  // primitives this body is merged with do have one, and a merge needs the
+  // attributes to line up.
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
@@ -102,13 +107,20 @@ const SEDAN_SECTIONS: Section[] = [
   { z: -2.05, w: 0.70, y: 0.54, h: 0.28, k: 3 },
 ];
 
-/** The glasshouse, inboard and set back — a windscreen rake, not a roof box. */
+/**
+ * The glasshouse: inboard, set back, and — the part that matters — sitting
+ * ON the body. Every one of these sections used to float a fifth of a metre
+ * above the belt line, so the cabin was a thin glass band with a hole under
+ * it: you could see the street through the car, and the roof panel hovered
+ * over the hole like a loose lid. The bottom of every section is the body's
+ * top; the top of the middle sections is the roof.
+ */
 const SEDAN_CABIN: Section[] = [
-  { z: 0.32, w: 0.74, y: 0.88, h: 0.05, k: 3 },
-  { z: -0.10, w: 0.80, y: 1.02, h: 0.20, k: 3 },
-  { z: -0.75, w: 0.82, y: 1.06, h: 0.22, k: 4 },
-  { z: -1.35, w: 0.78, y: 1.02, h: 0.20, k: 3 },
-  { z: -1.72, w: 0.68, y: 0.90, h: 0.08, k: 3 },
+  { z: 0.50, w: 0.60, y: 1.12, h: 0.16, k: 3 },
+  { z: 0.05, w: 0.76, y: 1.26, h: 0.29, k: 3 },
+  { z: -0.70, w: 0.80, y: 1.27, h: 0.28, k: 4 },
+  { z: -1.30, w: 0.76, y: 1.25, h: 0.28, k: 3 },
+  { z: -1.70, w: 0.62, y: 1.12, h: 0.16, k: 3 },
 ];
 
 const COMPACT_SECTIONS: Section[] = [
@@ -123,10 +135,10 @@ const COMPACT_SECTIONS: Section[] = [
 ];
 
 const COMPACT_CABIN: Section[] = [
-  { z: 0.15, w: 0.68, y: 0.84, h: 0.05, k: 3 },
-  { z: -0.25, w: 0.74, y: 0.98, h: 0.19, k: 3 },
-  { z: -0.95, w: 0.75, y: 1.0, h: 0.2, k: 4 },
-  { z: -1.45, w: 0.66, y: 0.9, h: 0.1, k: 3 },
+  { z: 0.30, w: 0.58, y: 1.05, h: 0.15, k: 3 },
+  { z: -0.10, w: 0.74, y: 1.17, h: 0.26, k: 3 },
+  { z: -0.80, w: 0.75, y: 1.18, h: 0.25, k: 4 },
+  { z: -1.40, w: 0.64, y: 1.05, h: 0.15, k: 3 },
 ];
 
 const SPORTS_SECTIONS: Section[] = [
@@ -141,10 +153,10 @@ const SPORTS_SECTIONS: Section[] = [
 ];
 
 const SPORTS_CABIN: Section[] = [
-  { z: 0.2, w: 0.66, y: 0.7, h: 0.04, k: 3 },
-  { z: -0.3, w: 0.72, y: 0.84, h: 0.15, k: 3 },
-  { z: -1.0, w: 0.7, y: 0.84, h: 0.14, k: 4 },
-  { z: -1.5, w: 0.5, y: 0.72, h: 0.05, k: 3 },
+  { z: 0.35, w: 0.58, y: 0.86, h: 0.08, k: 3 },
+  { z: -0.10, w: 0.72, y: 0.95, h: 0.15, k: 3 },
+  { z: -0.80, w: 0.70, y: 0.95, h: 0.15, k: 4 },
+  { z: -1.40, w: 0.50, y: 0.86, h: 0.08, k: 3 },
 ];
 
 const VAN_SECTIONS: Section[] = [
@@ -158,10 +170,10 @@ const VAN_SECTIONS: Section[] = [
 ];
 
 const VAN_CABIN: Section[] = [
-  { z: 1.35, w: 0.8, y: 1.1, h: 0.05, k: 3 },
-  { z: 0.85, w: 0.86, y: 1.24, h: 0.22, k: 3 },
-  { z: 0.0, w: 0.88, y: 1.28, h: 0.24, k: 4 },
-  { z: -0.7, w: 0.86, y: 1.26, h: 0.22, k: 3 },
+  { z: 1.45, w: 0.76, y: 1.32, h: 0.07, k: 3 },
+  { z: 1.00, w: 0.86, y: 1.44, h: 0.17, k: 3 },
+  { z: 0.00, w: 0.88, y: 1.45, h: 0.17, k: 4 },
+  { z: -0.70, w: 0.86, y: 1.44, h: 0.17, k: 3 },
 ];
 
 const PICKUP_SECTIONS: Section[] = [
@@ -176,10 +188,10 @@ const PICKUP_SECTIONS: Section[] = [
 ];
 
 const PICKUP_CABIN: Section[] = [
-  { z: 0.45, w: 0.76, y: 0.98, h: 0.05, k: 3 },
-  { z: 0.0, w: 0.82, y: 1.14, h: 0.2, k: 3 },
-  { z: -0.7, w: 0.82, y: 1.16, h: 0.2, k: 4 },
-  { z: -1.1, w: 0.72, y: 1.0, h: 0.07, k: 3 },
+  { z: 0.60, w: 0.72, y: 1.10, h: 0.07, k: 3 },
+  { z: 0.15, w: 0.82, y: 1.24, h: 0.19, k: 3 },
+  { z: -0.55, w: 0.82, y: 1.25, h: 0.19, k: 4 },
+  { z: -1.05, w: 0.70, y: 1.10, h: 0.07, k: 3 },
 ];
 
 export type BodyShape = 'sedan' | 'compact' | 'sports' | 'van' | 'pickup' | 'ebike';
@@ -202,30 +214,35 @@ export interface BodyMesh {
 /** One wheel: tyre, dished rim, five spokes, hub, brake disc. */
 function wheel(r: number, width: number): THREE.Group {
   const g = new THREE.Group();
-  const tyre = new THREE.Mesh(
-    new THREE.TorusGeometry(r * 0.78, r * 0.24, 8, 18),
-    new THREE.MeshStandardMaterial({ color: 0x131518, roughness: 0.95 }),
-  );
-  tyre.rotation.y = Math.PI / 2;
-  tyre.castShadow = true;
-  g.add(tyre);
+  const tyreMat = new THREE.MeshStandardMaterial({ color: 0x131518, roughness: 0.95 });
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0xa9adb2, roughness: 0.34, metalness: 0.82 });
+
+  // Nine meshes per wheel, four wheels per car, twenty cars on a street: that
+  // is most of a thousand draw calls for the traffic alone. The wheel is
+  // merged down to two — the tyre, and everything metal on it.
+  const tyreGeo = new THREE.TorusGeometry(r * 0.78, r * 0.24, 8, 18);
+  tyreGeo.rotateY(Math.PI / 2);
+
   const rimGeo = new THREE.CylinderGeometry(r * 0.56, r * 0.56, width * 0.8, 12);
   rimGeo.rotateZ(Math.PI / 2);
-  const rimMat = new THREE.MeshStandardMaterial({ color: 0xa9adb2, roughness: 0.34, metalness: 0.82 });
-  g.add(new THREE.Mesh(rimGeo, rimMat));
-  const spokeGeo = new THREE.BoxGeometry(width * 0.5, r * 1.02, 0.028);
+  const hubGeo = new THREE.CylinderGeometry(r * 0.17, r * 0.17, width * 0.9, 8);
+  hubGeo.rotateZ(Math.PI / 2);
+  const discGeo = new THREE.CylinderGeometry(r * 0.44, r * 0.44, 0.02, 12);
+  discGeo.rotateZ(Math.PI / 2);
+  discGeo.translate(width * 0.2, 0, 0);
+  const metal: THREE.BufferGeometry[] = [rimGeo, hubGeo, discGeo];
   for (let k = 0; k < 5; k++) {
-    const s = new THREE.Mesh(spokeGeo, rimMat);
-    s.rotation.x = (k / 5) * Math.PI;
-    g.add(s);
+    const spoke = new THREE.BoxGeometry(width * 0.5, r * 1.02, 0.028);
+    spoke.rotateX((k / 5) * Math.PI);
+    metal.push(spoke);
   }
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.17, r * 0.17, width * 0.9, 8), rimMat);
-  hub.rotation.z = Math.PI / 2;
-  g.add(hub);
-  const disc = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.44, r * 0.44, 0.02, 12), new THREE.MeshStandardMaterial({ color: 0x6a6d72, roughness: 0.5, metalness: 0.7 }));
-  disc.rotation.z = Math.PI / 2;
-  disc.position.x = width * 0.2;
-  g.add(disc);
+
+  const tyre = new THREE.Mesh(tyreGeo, tyreMat);
+  tyre.castShadow = true;
+  g.add(tyre);
+  const rim = new THREE.Mesh(mergeGeometries(metal, false) ?? rimGeo, rimMat);
+  rim.castShadow = true;
+  g.add(rim);
   return g;
 }
 
@@ -236,60 +253,140 @@ function wheel(r: number, width: number): THREE.Group {
 export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMesh {
   const S = SHAPES[shapeId] ?? SHAPES.sedan;
   const group = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.55 });
-  const glass = new THREE.MeshStandardMaterial({ color: 0x10161c, roughness: 0.06, metalness: 0.85 });
-
-  const bodyGeo = loft(S.body, 18);
-  const body = new THREE.Mesh(bodyGeo, paint);
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
-
-  const cabin = new THREE.Mesh(loft(S.cabin, 16), glass);
-  cabin.castShadow = true;
-  group.add(cabin);
-
-  // Pillars: thin body-coloured bars across the glasshouse, so the cabin reads
-  // as a cabin and not a smoked bubble.
-  const pillarMat = paint;
-  for (const [z, w] of [[0.3, 0.76], [-0.75, 0.84], [-1.5, 0.7]] as const) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.46, w * 2), pillarMat);
-    bar.position.set(0, 1.05, z);
-    group.add(bar);
-  }
-  // Roof panel
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.07, 1.5), pillarMat);
-  roof.position.set(0, 1.24, -0.55);
-  group.add(roof);
-
-  // Lights
+  // Car paint is a dielectric with a clearcoat over it, not half metal. At
+  // metalness 0.55 the diffuse half of the shading went away, and with no
+  // environment map to reflect there was nothing left: every car in the
+  // arcade's shadow rendered as a black slab. That is the "unfinished black
+  // box" the review kept pointing at — a shading bug, not a modelling one.
+  // DoubleSide, and this is not a detail. The hulls are skinned from a ring
+  // of points around each section, and half of them came out wound the
+  // wrong way round: back-face culling then threw the car's flanks away
+  // entirely, so every car on the street was a floating deck with a lid over
+  // it and a hole where the body should be. The glasshouse was the worst of
+  // it — you could see straight through the cabin to the shopfront opposite.
+  const paint = new THREE.MeshStandardMaterial({
+    color, roughness: 0.42, metalness: 0.16, side: THREE.DoubleSide,
+  });
+  // Tinted glass, and actually glass. A near-black metallic greenhouse with
+  // no environment to reflect renders as a black slab — which is what made
+  // every car on the street read as an unfinished box, and what made the
+  // driver look like a head embedded in the bodywork instead of a person
+  // sitting behind a windscreen.
+  // Glass you can actually see. At 0.42 opacity over a dark street the
+  // greenhouse vanished and the car read as a convertible with a loose roof
+  // panel floating over it — the "unfinished box" the review kept seeing.
+  const glass = new THREE.MeshStandardMaterial({
+    color: 0x3a4a58,
+    roughness: 0.12,
+    metalness: 0.12,
+    transparent: true,
+    opacity: 0.72,
+    side: THREE.DoubleSide,
+  });
+  // The inside of the car. Without a dark interior behind the glass you look
+  // straight through the greenhouse at the shopfront opposite, and a car with
+  // a hole where the cabin is reads worse than no car at all.
+  const interior = new THREE.MeshStandardMaterial({
+    color: 0x191b1f, roughness: 0.92, metalness: 0, side: THREE.DoubleSide,
+  });
   const headMat = new THREE.MeshStandardMaterial({ color: 0xfff3d6, emissive: 0xffe6b0, emissiveIntensity: 2.4 });
   const tailMat = new THREE.MeshStandardMaterial({ color: 0x4a0d10, emissive: 0xff2020, emissiveIntensity: 1.8 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.3, metalness: 0.85 });
+  const darkBump = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.6 });
+  const grilleMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.5, metalness: 0.4 });
+
+  // One mesh per material. A car used to be fifty separate little meshes —
+  // nine of them per wheel — and a street with traffic in it is twenty cars,
+  // which was most of a thousand draw calls spent on the traffic alone.
+  const buckets = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const put = (geo: THREE.BufferGeometry, mat: THREE.Material, m?: THREE.Matrix4): void => {
+    if (m) geo.applyMatrix4(m);
+    const list = buckets.get(mat);
+    if (list) list.push(geo);
+    else buckets.set(mat, [geo]);
+  };
+  const xf = (
+    x: number, y: number, z: number,
+    sx = 1, sy = 1, sz = 1,
+    rx = 0, ry = 0, rz = 0,
+  ): THREE.Matrix4 => new THREE.Matrix4().compose(
+    new THREE.Vector3(x, y, z),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)),
+    new THREE.Vector3(sx, sy, sz),
+  );
+
+  put(loft(S.body, 18), paint);
+  put(loft(S.cabin, 16), glass);
+
+  // Pillars: thin body-coloured bars across the glasshouse, so the cabin reads
+  // as a cabin and not a smoked bubble. Their height and height above the
+  // belt line come from the cabin's own sections.
+  // `h` is the half height, so a section's top is y + h. Reading it as
+  // y + h/2 put the belt line 20 cm too low and the roof with it, which is
+  // how the interior ended up buried inside the bodywork.
+  const roofY = S.cabin.reduce((m, s2) => Math.max(m, s2.y + s2.h), 0);
+  const beltY = S.body.reduce((m, s2) => Math.max(m, s2.y + s2.h), 0);
+  const pillarH = Math.max(0.2, roofY - beltY);
+  const inner = S.cabin.slice(1, -1);
+  for (const sec of inner) {
+    put(new THREE.BoxGeometry(0.07, pillarH, sec.w * 2), paint, xf(0, beltY + pillarH / 2, sec.z));
+  }
+  // Roof panel — measured off the cabin instead of hard-coded. It used to be
+  // a fixed slab at y=1.24 over a cabin that stopped at 1.17, with the
+  // windscreen end of the glasshouse 0.36 m below it: a plate of paint
+  // hovering over the car with daylight under it.
+  const cabinW = S.cabin.reduce((m, s2) => Math.max(m, s2.w), 0);
+  const roofW = cabinW * 2 * 0.92;
+  const roofMid = (S.cabin[1].z + S.cabin[S.cabin.length - 2].z) / 2;
+  const roofLen = Math.abs(S.cabin[1].z - S.cabin[S.cabin.length - 2].z) + 0.62;
+  put(new THREE.BoxGeometry(roofW, 0.07, roofLen), paint, xf(0, roofY + 0.03, roofMid));
+
+  // Seats and a dash, in the dark, behind the glass.
+  const zFront = S.cabin.reduce((m, s2) => Math.max(m, s2.z), -1e9);
+  const zBack = S.cabin.reduce((m, s2) => Math.min(m, s2.z), 1e9);
+  const cabinMidZ = (zFront + zBack) / 2;
+  const cabinLen = zFront - zBack;
+  // Just the seat backs, low in the cabin. A full-height black block behind
+  // the glass reads as a crate in the car rather than as seats.
+  // The back seat, low and at the back of the cabin. A block of interior
+  // across the middle of the glasshouse swallowed the driver's head.
+  const seatTop = beltY + 0.1;
+  put(
+    new THREE.BoxGeometry(cabinW * 1.45, seatTop - beltY, cabinLen * 0.34),
+    interior,
+    xf(0, (beltY + seatTop) / 2, cabinMidZ - cabinLen * 0.24),
+  );
+  put(new THREE.BoxGeometry(cabinW * 1.45, 0.1, 0.24), interior, xf(0, beltY + 0.14, zFront - 0.22));
+
+  // Lights, and the wing mirrors.
   for (const sx of [-1, 1]) {
-    const hl = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), headMat);
-    hl.scale.set(0.5, 0.62, 1.15);
-    hl.position.set(sx * 0.46, 0.55, S.frontZ - 0.08);
-    group.add(hl);
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.07), tailMat);
-    tl.position.set(sx * 0.5, 0.6, S.rearZ + 0.06);
-    group.add(tl);
-    // Wing mirror
-    const mir = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.06), pillarMat);
-    mir.position.set(sx * 0.9, 0.98, 0.3);
-    group.add(mir);
+    put(new THREE.SphereGeometry(0.11, 10, 8), headMat, xf(sx * 0.46, 0.55, S.frontZ - 0.08, 0.5, 0.62, 1.15));
+    put(new THREE.BoxGeometry(0.34, 0.1, 0.07), tailMat, xf(sx * 0.5, 0.6, S.rearZ + 0.06));
+    put(new THREE.BoxGeometry(0.16, 0.08, 0.06), paint, xf(sx * 0.9, 0.98, 0.3));
   }
   // Bumpers — chrome front, dark rear. Two horizontal bands is all it takes.
-  const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.3, metalness: 0.85 });
-  const fb = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 0.14), chrome);
-  fb.position.set(0, 0.36, S.frontZ - 0.02);
-  group.add(fb);
-  const rb = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.14, 0.12), new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.6 }));
-  rb.position.set(0, 0.38, S.rearZ + 0.02);
-  group.add(rb);
+  put(new THREE.BoxGeometry(1.5, 0.12, 0.14), chrome, xf(0, 0.36, S.frontZ - 0.02));
+  put(new THREE.BoxGeometry(1.5, 0.12, 0.12), darkBump, xf(0, 0.38, S.rearZ + 0.02));
   // Grille
-  const grille = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.18, 0.08), new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.5, metalness: 0.4 }));
-  grille.position.set(0, 0.6, S.frontZ - 0.04);
-  group.add(grille);
+  put(new THREE.BoxGeometry(1.1, 0.18, 0.08), grilleMat, xf(0, 0.6, S.frontZ - 0.04));
+
+  for (const [mat, geos] of buckets) {
+    const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+    if (!merged) {
+      // A merge that does not line up is not a reason to lose the car.
+      for (const geo of geos) {
+        const m = new THREE.Mesh(geo, mat);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        group.add(m);
+      }
+      continue;
+    }
+    const m = new THREE.Mesh(merged, mat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+  }
 
   // Wheels
   const steerWheels: THREE.Object3D[] = [];
@@ -303,5 +400,15 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   }
 
   group.scale.setScalar(S.scale);
-  return { group, steerWheels };
+
+  // The sections are lofted along Z, so the finished body points down +Z. But
+  // everything in this game faces +X at heading 0 — the heading convention
+  // every vehicle in the codebase uses, and the one the Poly scooter is
+  // already normalised to. Without this turn the bodies were rendered a
+  // quarter turn out: cars drove along the street sideways, which is why
+  // nobody noticed, because until now the street had no cars on it.
+  const outer = new THREE.Group();
+  group.rotation.y = Math.PI / 2;
+  outer.add(group);
+  return { group: outer, steerWheels };
 }

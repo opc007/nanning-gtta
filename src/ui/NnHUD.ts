@@ -146,11 +146,36 @@ export class NnHUD {
     this.panelMoney.style.cssText = 'font-size:12px;opacity:.7;margin:4px 0 13px;';
     this.panelItems = document.createElement('div');
     this.panelItems.style.cssText = 'display:flex;flex-direction:column;gap:7px;';
+    // A panel you can only dismiss with a key is a panel you get stuck in the
+    // moment that key stops reaching the game — which is exactly what happened.
+    // Close button first, then the key hints.
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = '✕';
+    close.setAttribute('aria-label', '关闭');
+    close.style.cssText =
+      'position:absolute;top:10px;right:12px;width:30px;height:30px;line-height:26px;' +
+      'padding:0;text-align:center;font-size:15px;color:#f3ece0;cursor:pointer;' +
+      'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);' +
+      'border-radius:8px;';
+    close.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this.cb.onClose();
+    });
+
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:11px;opacity:.5;margin-top:15px;letter-spacing:1px;';
     hint.textContent = 'ESC / E 关闭　·　按 E 关门出去';
-    this.panel.append(this.panelTitle, this.panelMoney, this.panelItems, hint);
+    this.panel.append(close, this.panelTitle, this.panelMoney, this.panelItems, hint);
     root.appendChild(this.panel);
+    // Click the street, not the panel, to dismiss. `pointer-events:none` on the
+    // root means only the panel itself is hit-testable, so the canvas underneath
+    // is what actually receives this — listen on the window and check the target.
+    window.addEventListener('pointerdown', (ev) => {
+      if (!this.openShop) return;
+      if (ev.target instanceof Node && this.panel.contains(ev.target)) return;
+      this.cb.onClose();
+    });
 
     // ── Mission panel, top-left under the wanted stars ──────────────────
     this.missionBox = document.createElement('div');
