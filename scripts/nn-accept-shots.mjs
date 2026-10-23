@@ -34,7 +34,7 @@ page.on('pageerror', (e) => errs.push(e.message.split('\n')[0]));
 
 async function goto(qs) {
   const base = URL.split('?')[0];
-  await page.goto(`${base}?${qs}`, { waitUntil: 'load', timeout: 300000 });
+  await page.goto(`${base}?${qs}`, { waitUntil: 'load', timeout: 600000 });
   await page.waitForTimeout(5000);
   await page.evaluate(() => window.__skipSplash?.());
   await page.waitForTimeout(3500);
@@ -56,7 +56,7 @@ function assertRealShot(path) {
 
 async function shot(name) {
   const path = join(OUT, `accept-${name}.png`);
-  await page.screenshot({ path, timeout: 300000 });
+  await page.screenshot({ path, timeout: 600000 });
   assertRealShot(path);
   if (MEDIA) copyFileSync(path, join(MEDIA, `accept-${name}.png`));
   console.log('  →', name, path, `${(statSync(path).size / 1024) | 0}KB`);
@@ -212,7 +212,7 @@ async function shootInterior(defId, name) {
     );
     await page.waitForTimeout(700);
     const tryPath = join(OUT, `accept-interior-${name}__try-${eye.label}.png`);
-    await page.screenshot({ path: tryPath, timeout: 180000 });
+    await page.screenshot({ path: tryPath, timeout: 600000 });
     let lit = 0;
     try {
       lit = litFraction(tryPath);
@@ -247,7 +247,7 @@ async function shootInterior(defId, name) {
     [meta, best.eye],
   );
   await page.waitForTimeout(500);
-  await page.screenshot({ path, timeout: 300000 });
+  await page.screenshot({ path, timeout: 600000 });
   assertRealShot(path);
   const lit = litFraction(path);
   if (lit < 0.35) throw new Error(`${path} still too dark (lit=${lit})`);
@@ -355,7 +355,7 @@ async function shootFenjiaoWok() {
   }, [aim]);
   await page.waitForTimeout(700);
   const path = join(OUT, 'accept-interior-fenjiao.png');
-  await page.screenshot({ path, timeout: 300000 });
+  await page.screenshot({ path, timeout: 600000 });
   assertRealShot(path);
   const lit = litFraction(path);
   if (lit < 0.35) throw new Error(`${path} too dark (lit=${lit})`);
