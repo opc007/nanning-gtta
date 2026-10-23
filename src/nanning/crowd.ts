@@ -456,34 +456,28 @@ export class Crowd {
    */
   private stepCombat(t: Talker, dt: number, px: number, pz: number, heading: number): void {
     if (t.combat === 'carried') {
-      // Over the shoulder, which is what picking somebody up means. It used
-      // to be held out in front at chest height, and in a picture it read as
-      // the player standing next to another person rather than carrying
-      // them.
+      // Carried over the shoulder, and there are three things that have to
+      // be true for it to read:
+      //
+      // 1. The model's origin is at its FEET. Put the origin where the body
+      //    is carried and you have put the feet on the carrier's head.
+      // 2. The body has to be tipped about the FORWARD axis. The model faces
+      //    +X after the yaw, so +X is forward and +Z is to the right; a tip
+      //    about Z only rolls the body and it ends up pointing straight
+      //    ahead of the carrier.
+      // 3. A chibi is a metre of head on a metre of body, so at any size
+      //    either the head or the boots end up at shoulder height — and a
+      //    head at shoulder height is a head in the carrier's neck. At half
+      //    size the whole body is 0.8 m: it lies along the shoulder line
+      //    with the head out past one shoulder and the boots past the other,
+      //    and neither end is near the carrier's head.
       const fx = Math.cos(heading);
       const fz = -Math.sin(heading);
-      // Smaller, and behind the shoulder rather than on top of it: a full
-      // size chibi is 1.64 m, so carried flat his boots end up buried in the
-      // carrier's neck. At three-quarter size, slung down the back, the
-      // boots hang behind the carrier and the head clears the shoulder.
-      t.group.scale.setScalar(0.72);
-      // The model's origin is at its FEET, and that is the whole difficulty.
-      // Put the origin where the body is carried and you have put the feet
-      // on the carrier's head; two rounds ago that is exactly what happened
-      // and the legs came up through their scalp.
-      //
-      // So the body lies across the line of the shoulders with the origin
-      // (the feet) well off to one side and the head out past the other
-      // shoulder. Neither end is anywhere near the carrier's head or neck.
-      // Which way is "across the shoulders"? The rider's model faces +X
-      // after the yaw, so +X is forward and +Z is to the right. Tipping the
-      // body about the FORWARD axis (X) swings it sideways onto the
-      // shoulders; tipping it about Z only rolls it, and the body ended up
-      // pointing straight ahead of the carrier instead of lying across them.
-      const rx = fz;
-      const rz = -fx;
-      t.group.position.set(px - rx * 0.45, 1.2, pz - rz * 0.45);
-      t.group.rotation.set(1.2, heading + 0.45, 0);
+      const leftX = fz;
+      const leftZ = -fx;
+      t.group.scale.setScalar(0.5);
+      t.group.position.set(px + leftX * 0.4, 1.15, pz + leftZ * 0.4);
+      t.group.rotation.set(1.45, heading, 0);
       t.x = t.group.position.x;
       t.z = t.group.position.z;
       return;

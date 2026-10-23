@@ -79,8 +79,8 @@ describe('Crowd — street rules', () => {
     // The feet hang off to one side, so the head comes out past the other
     // shoulder and neither end is in the carrier's head.
     expect(t.group.position.x).toBeCloseTo(5, 1);
-    expect(t.group.position.y).toBeCloseTo(1.2, 2);
-    expect(t.group.scale.x).toBeCloseTo(0.72, 2);
+    expect(t.group.position.y).toBeCloseTo(1.15, 2);
+    expect(t.group.scale.x).toBeCloseTo(0.5, 2);
     // Tipped about the forward axis, so the body lies across the shoulders.
     expect(t.group.rotation.x).toBeGreaterThan(1.0);
     expect(t.group.rotation.z).toBeCloseTo(0, 2);
