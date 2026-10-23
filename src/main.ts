@@ -458,8 +458,8 @@ const MAX_HEALTH = 100;
  * So a driver is scaled down to something a seat can hold, and dropped so
  * the hips land on the cushion.
  */
-const RIDER_SCALE = 0.55;
-const SEAT_Y = 0.26;
+const RIDER_SCALE = 0.42;
+const SEAT_Y = 0.64;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
 const DAMAGE_PER_SPEED = 5; // health lost per m/s of impact
 const KNOCKBACK = 1.6;
@@ -1002,7 +1002,18 @@ function render(alpha: number, frameDt: number): void {
     // The seat is behind the middle of the car, and the cabin's centre is
     // further back still: at 0.35 m the rider's legs reached forward over
     // the bonnet instead of under the dashboard.
-    avatar.position.set(ridingPose.x - fx * 0.62, SEAT_Y, ridingPose.z - fz * 0.62);
+    //
+    // And a driver sits on one side, not on the centre line. China drives on
+    // the left, so the wheel and the seat are on the car's left; on the
+    // centreline the rider was half inside the cabin wall and you could not
+    // see who was driving.
+    const rx = -fz;
+    const rz = fx;
+    avatar.position.set(
+      ridingPose.x - fx * 0.62 - rx * 0.3,
+      SEAT_Y,
+      ridingPose.z - fz * 0.62 - rz * 0.3,
+    );
     avatar.rotation.y = ridingPose.heading;
     avatar.scale.setScalar(RIDER_SCALE);
   } else {

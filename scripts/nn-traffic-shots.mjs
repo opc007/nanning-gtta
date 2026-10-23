@@ -34,7 +34,7 @@ await p.evaluate(() => window.__skipSplash?.());
 // The world has to be up and the street has to have traffic in it. The
 // headless renderer runs the simulation about five times slower than wall
 // clock, so the traffic needs real time to fill the lanes.
-await p.waitForFunction(() => !!window.__nn?.vehicles?.carStates, null, { timeout: 300000 });
+await p.waitForFunction(() => !!window.__nn?.vehicles?.carStates, null, { timeout: 600000 });
 console.log('world up');
 await p.waitForFunction(
   () => (window.__nn.vehicles.carStates() ?? []).filter((c) => c.active && c.role !== 'police').length >= 6,
@@ -72,7 +72,7 @@ const street = await p.evaluate(() => {
 });
 console.log('street', JSON.stringify(street));
 await p.waitForTimeout(6000);
-await p.screenshot({ path: `${OUT}/street-traffic.png`, timeout: 300000 });
+await p.screenshot({ path: `${OUT}/street-traffic.png`, timeout: 600000 });
 console.log('  → street-traffic');
 
 // ── Take a car off the street and drive it ──────────────────────────────────
@@ -131,15 +131,17 @@ const pose = await p.evaluate(() => {
   globalThis.freezeCam = true;
   // Look at the driver's side of the car, from outside, so the seat and the
   // person in it are the subject rather than the road.
-  // A three-quarter view from the carriageway, not from the pavement. The
-  // last attempt put the camera 7 m to the side of the car, which is inside
-  // the shopfronts — the shot was taken through a wall.
-  const side = pp.x > 0 ? -1 : 1;
-  const along = Math.abs(Math.sin(pp.heading)) > 0.5 ? 1 : 0;
-  const cx = pp.x * 0.4 + side * 2.4;
-  const cz = pp.z + (along ? 5.4 * Math.sign(Math.sin(pp.heading) || 1) : 4.6);
-  n.camera.position.set(cx, 2.35, cz);
-  n.camera.lookAt(pp.x, 0.8, pp.z);
+  // Stand on the driver's side of the car. China drives on the left, so the
+  // seat is on the car's left; from the other side you look at the back of
+  // the cabin and the driver is not in the picture at all. And stay over the
+  // carriageway — a camera seven metres to the side of the car is inside the
+  // shopfronts, and the shot is taken through a wall.
+  const rx = Math.sin(pp.heading);
+  const rz = Math.cos(pp.heading);
+  const cx = Math.max(-4.0, Math.min(4.0, pp.x - rx * 6.4));
+  const cz = pp.z - rz * 6.4;
+  n.camera.position.set(cx, 2.45, cz);
+  n.camera.lookAt(pp.x, 0.85, pp.z);
   // Measure where the rider's body actually is, so a limb hanging through
   // the floor is a number and not an opinion.
   const box = window.__game?.riderBox?.() ?? null;
@@ -150,7 +152,7 @@ const pose = await p.evaluate(() => {
 });
 console.log('pose', JSON.stringify(pose));
 await p.waitForTimeout(5000);
-await p.screenshot({ path: `${OUT}/jack-and-drive.png`, timeout: 300000 });
+await p.screenshot({ path: `${OUT}/jack-and-drive.png`, timeout: 600000 });
 console.log('  → jack-and-drive');
 
 console.log('errs:', errs.length ? errs.slice(0, 3) : 'none');

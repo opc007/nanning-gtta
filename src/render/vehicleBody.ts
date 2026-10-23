@@ -116,11 +116,11 @@ const SEDAN_SECTIONS: Section[] = [
  * top; the top of the middle sections is the roof.
  */
 const SEDAN_CABIN: Section[] = [
-  { z: 0.50, w: 0.60, y: 1.05, h: 0.10, k: 3 },
-  { z: 0.05, w: 0.76, y: 1.15, h: 0.19, k: 3 },
-  { z: -0.70, w: 0.80, y: 1.16, h: 0.18, k: 4 },
-  { z: -1.30, w: 0.76, y: 1.14, h: 0.18, k: 3 },
-  { z: -1.70, w: 0.62, y: 1.04, h: 0.09, k: 3 },
+  { z: 0.50, w: 0.60, y: 1.12, h: 0.16, k: 3 },
+  { z: 0.05, w: 0.76, y: 1.26, h: 0.29, k: 3 },
+  { z: -0.70, w: 0.80, y: 1.27, h: 0.28, k: 4 },
+  { z: -1.30, w: 0.76, y: 1.25, h: 0.28, k: 3 },
+  { z: -1.70, w: 0.62, y: 1.12, h: 0.16, k: 3 },
 ];
 
 const COMPACT_SECTIONS: Section[] = [
@@ -135,10 +135,10 @@ const COMPACT_SECTIONS: Section[] = [
 ];
 
 const COMPACT_CABIN: Section[] = [
-  { z: 0.30, w: 0.58, y: 1.00, h: 0.09, k: 3 },
-  { z: -0.10, w: 0.74, y: 1.09, h: 0.17, k: 3 },
-  { z: -0.80, w: 0.75, y: 1.10, h: 0.17, k: 4 },
-  { z: -1.40, w: 0.64, y: 1.00, h: 0.09, k: 3 },
+  { z: 0.30, w: 0.58, y: 1.05, h: 0.15, k: 3 },
+  { z: -0.10, w: 0.74, y: 1.17, h: 0.26, k: 3 },
+  { z: -0.80, w: 0.75, y: 1.18, h: 0.25, k: 4 },
+  { z: -1.40, w: 0.64, y: 1.05, h: 0.15, k: 3 },
 ];
 
 const SPORTS_SECTIONS: Section[] = [
@@ -258,7 +258,15 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   // environment map to reflect there was nothing left: every car in the
   // arcade's shadow rendered as a black slab. That is the "unfinished black
   // box" the review kept pointing at — a shading bug, not a modelling one.
-  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.16 });
+  // DoubleSide, and this is not a detail. The hulls are skinned from a ring
+  // of points around each section, and half of them came out wound the
+  // wrong way round: back-face culling then threw the car's flanks away
+  // entirely, so every car on the street was a floating deck with a lid over
+  // it and a hole where the body should be. The glasshouse was the worst of
+  // it — you could see straight through the cabin to the shopfront opposite.
+  const paint = new THREE.MeshStandardMaterial({
+    color, roughness: 0.42, metalness: 0.16, side: THREE.DoubleSide,
+  });
   // Tinted glass, and actually glass. A near-black metallic greenhouse with
   // no environment to reflect renders as a black slab — which is what made
   // every car on the street read as an unfinished box, and what made the
@@ -269,15 +277,18 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   // panel floating over it — the "unfinished box" the review kept seeing.
   const glass = new THREE.MeshStandardMaterial({
     color: 0x3a4a58,
-    roughness: 0.1,
-    metalness: 0.28,
+    roughness: 0.12,
+    metalness: 0.12,
     transparent: true,
     opacity: 0.72,
+    side: THREE.DoubleSide,
   });
   // The inside of the car. Without a dark interior behind the glass you look
   // straight through the greenhouse at the shopfront opposite, and a car with
   // a hole where the cabin is reads worse than no car at all.
-  const interior = new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.92, metalness: 0 });
+  const interior = new THREE.MeshStandardMaterial({
+    color: 0x191b1f, roughness: 0.92, metalness: 0, side: THREE.DoubleSide,
+  });
   const headMat = new THREE.MeshStandardMaterial({ color: 0xfff3d6, emissive: 0xffe6b0, emissiveIntensity: 2.4 });
   const tailMat = new THREE.MeshStandardMaterial({ color: 0x4a0d10, emissive: 0xff2020, emissiveIntensity: 1.8 });
   const chrome = new THREE.MeshStandardMaterial({ color: 0xc4c8cc, roughness: 0.3, metalness: 0.85 });
@@ -337,13 +348,15 @@ export function makeCarBody(color: number, shapeId: BodyShape = 'sedan'): BodyMe
   const cabinLen = zFront - zBack;
   // Just the seat backs, low in the cabin. A full-height black block behind
   // the glass reads as a crate in the car rather than as seats.
-  const seatTop = beltY + 0.13;
+  // The back seat, low and at the back of the cabin. A block of interior
+  // across the middle of the glasshouse swallowed the driver's head.
+  const seatTop = beltY + 0.1;
   put(
-    new THREE.BoxGeometry(cabinW * 1.45, seatTop - beltY, cabinLen * 0.5),
+    new THREE.BoxGeometry(cabinW * 1.45, seatTop - beltY, cabinLen * 0.34),
     interior,
-    xf(0, (beltY + seatTop) / 2, cabinMidZ - cabinLen * 0.12),
+    xf(0, (beltY + seatTop) / 2, cabinMidZ - cabinLen * 0.24),
   );
-  put(new THREE.BoxGeometry(cabinW * 1.45, 0.12, 0.26), interior, xf(0, beltY + 0.16, zFront - 0.24));
+  put(new THREE.BoxGeometry(cabinW * 1.45, 0.1, 0.24), interior, xf(0, beltY + 0.14, zFront - 0.22));
 
   // Lights, and the wing mirrors.
   for (const sx of [-1, 1]) {
