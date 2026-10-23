@@ -561,20 +561,29 @@ async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<v
   // Under the arcade, clear of the columns, on the raised pavement.
   const PARK_X = STREET_HALF + 0.95;
   const PARK_Y = ARCADE_RAISE;
+  // The colonnade stands a column every 4.45 m along the kerb, and a scooter
+  // is 1.85 m long. Parked at the shopfront it straddles one, with its
+  // handlebars inside the column — so park it in the bay between two.
+  const COL_PITCH = 4.45;
+  const COL_FIRST = STREET_Z0 + 1.2;
+  const bay = (z: number): number => {
+    const k = Math.round((z - COL_FIRST - COL_PITCH / 2) / COL_PITCH);
+    return COL_FIRST + COL_PITCH / 2 + k * COL_PITCH;
+  };
   for (const unit of city.shops) {
     if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
     // The same side as the shop: nx points from the shop into the street, so
     // -nx is the near kerb.
     const x = -unit.nx * PARK_X;
-    spots.push({ x, z: unit.z - 1.1, heading, y: PARK_Y });
-    spots.push({ x, z: unit.z + 1.1, heading, y: PARK_Y });
+    spots.push({ x, z: bay(unit.z - 1.1), heading, y: PARK_Y });
+    spots.push({ x, z: bay(unit.z + 1.1), heading, y: PARK_Y });
   }
   // Extra pairs along both sides so mid-street framing is not empty.
   for (const side of [-1, 1] as const) {
     const x = side * PARK_X;
     for (let z = STREET_Z0 + 25; z < STREET_Z1 - 25; z += 45) {
-      spots.push({ x, z: z - 0.9, heading, y: PARK_Y });
-      spots.push({ x, z: z + 0.9, heading, y: PARK_Y });
+      spots.push({ x, z: bay(z - 0.9), heading, y: PARK_Y });
+      spots.push({ x, z: bay(z + 0.9), heading, y: PARK_Y });
     }
   }
   await addPolyEbikes(scene, spots);

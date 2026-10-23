@@ -91,7 +91,11 @@ for (let i = 0; i < 3; i += 1) {
   }
   await p.waitForTimeout(1500);
 }
-await p.waitForTimeout(3000);
+// Give the separation time to settle. The crowd pushes itself apart over a
+// few frames, and the headless renderer only manages about one of those a
+// second, so a picture taken straight after the blows catches everybody still
+// piled up where they were hit.
+await p.waitForTimeout(12000);
 const afterPunch = await p.evaluate(() => {
   const c = window.__nn.crowd;
   const arr = c.talkers ?? c.people ?? [];

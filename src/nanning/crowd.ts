@@ -332,6 +332,7 @@ export class Crowd {
     if (!t || t.combat === 'carried' || t.combat === 'down') return false;
     t.combat = 'carried';
     t.vx = t.vz = t.vy = 0;
+    t.group.scale.setScalar(0.72);
     t.y = 0;
     t.hostile = false;
     t.t = 0;
@@ -463,9 +464,14 @@ export class Crowd {
       const fz = -Math.sin(heading);
       const rx = -fz;
       const rz = fx;
-      t.group.position.set(px - rx * 0.26 - fx * 0.1, 1.18, pz - rz * 0.26 - fz * 0.1);
-      // Draped: the body lies across the shoulders, head back.
-      t.group.rotation.set(0, heading, -1.15);
+      // Smaller, and behind the shoulder rather than on top of it: a full
+      // size chibi is 1.64 m, so carried flat his boots end up buried in the
+      // carrier's neck. At three-quarter size, slung down the back, the
+      // boots hang behind the carrier and the head clears the shoulder.
+      t.group.scale.setScalar(0.72);
+      t.group.position.set(px - rx * 0.3 - fx * 0.42, 1.24, pz - rz * 0.3 - fz * 0.42);
+      // Draped: the body lies down the back, head over the far shoulder.
+      t.group.rotation.set(0.35, heading, -0.5);
       t.x = t.group.position.x;
       t.z = t.group.position.z;
       return;

@@ -81,6 +81,21 @@ const street = await p.evaluate(() => {
 });
 console.log('street', JSON.stringify(street));
 await p.waitForTimeout(6000);
+// The traffic keeps moving while the frame is being set up, so a car can
+// drive into the player between choosing a spot and taking the picture.
+// Check once more, and move if it did.
+const cleared = await p.evaluate(() => {
+  const n = window.__nn;
+  const pl = n.player;
+  const cars = n.vehicles.carStates().filter((c) => c.active && c.role === 'ai');
+  const near = cars.find((c) => Math.hypot(c.x - pl.x, c.z - pl.z) < 3.4);
+  if (!near) return { ok: true };
+  // Walk the player to the far side of the middle lane, away from the car.
+  pl.x = near.x > 0 ? -1.7 : 1.7;
+  return { ok: false, moved: true };
+});
+console.log('cleared', JSON.stringify(cleared));
+await p.waitForTimeout(2500);
 await p.screenshot({ path: `${OUT}/street-traffic.png`, timeout: 600000 });
 console.log('  → street-traffic');
 
