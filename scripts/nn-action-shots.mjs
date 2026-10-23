@@ -74,7 +74,21 @@ await p.evaluate(() => {
   const pl = n.player;
   if (!arr.length) return;
   // Stand a couple of metres from somebody and face them.
-  const t = arr[Math.floor(arr.length / 2)];
+  // The loneliest person on the street. Start a fight with somebody in the
+  // middle of a crowd and the crowd joins in: they converge on you, and the
+  // picture is a knot of bodies whatever the separation says. Somebody on
+  // their own is a fight between two people with daylight between them.
+  let lone = null;
+  let loneDist = -1;
+  for (const x of arr) {
+    let nearest = 99;
+    for (const o of arr) {
+      if (o === x) continue;
+      nearest = Math.min(nearest, Math.hypot(o.x - x.x, o.z - x.z));
+    }
+    if (nearest > loneDist) { loneDist = nearest; lone = x; }
+  }
+  const t = lone ?? arr[Math.floor(arr.length / 2)];
   pl.x = t.x + 1.6;
   pl.z = t.z;
   pl.heading = Math.atan2(-(t.z - pl.z), t.x - pl.x);

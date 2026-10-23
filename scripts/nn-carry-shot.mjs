@@ -90,12 +90,19 @@ for (let i = 0; i < 8 && !carrying; i += 1) {
 console.log('carrying', carrying);
 await p.waitForTimeout(2000);
 
+// From the side, at shoulder height. Shot from the front the carried body
+// is behind the carrier and reads as somebody crouching at their heels.
 await p.evaluate(() => {
   const n = window.__nn;
   const pl = n.player;
   globalThis.freezeCam = true;
-  n.camera.position.set(pl.x + 1.4, 2.0, pl.z + 4.4);
-  n.camera.lookAt(pl.x, 1.0, pl.z);
+  // Along the street, not across it. The traffic lanes are at the kerb, so a
+  // camera four metres to the side of somebody in the middle of the road
+  // ends up inside a parked car — and the picture is a yellow bonnet.
+  // Along the street it stays in the clear lane and still looks at the carry
+  // side-on, because the carrier is facing across the road.
+  n.camera.position.set(pl.x, 1.75, pl.z + 4.6);
+  n.camera.lookAt(pl.x, 1.3, pl.z);
 });
 await p.waitForTimeout(2500);
 await p.screenshot({ path: `${OUT}/carry.png`, timeout: 600000 });

@@ -561,29 +561,48 @@ async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<v
   // Under the arcade, clear of the columns, on the raised pavement.
   const PARK_X = STREET_HALF + 0.95;
   const PARK_Y = ARCADE_RAISE;
-  // The colonnade stands a column every 4.45 m along the kerb, and a scooter
-  // is 1.85 m long. Parked at the shopfront it straddles one, with its
-  // handlebars inside the column — so park it in the bay between two.
-  const COL_PITCH = 4.45;
-  const COL_FIRST = STREET_Z0 + 1.2;
-  const bay = (z: number): number => {
-    const k = Math.round((z - COL_FIRST - COL_PITCH / 2) / COL_PITCH);
-    return COL_FIRST + COL_PITCH / 2 + k * COL_PITCH;
+  // The colonnade stands a column every few metres along the kerb, and a
+  // scooter is 1.85 m long. Parked at the shopfront it straddles one, with
+  // its front wheel inside it — so park it in the gap between two columns.
+  //
+  // The columns are not on a round number: the two frontages have different
+  // lengths (there is an alley on the west side) and the pitch is the run's
+  // length divided by the number of bays. So the column positions have to
+  // be worked out the same way the colonnade works them out, and the
+  // scooter dropped into the middle of the widest gap.
+  const bay = (side: number, z: number): number => {
+    const runs = side > 0
+      ? [[STREET_Z0 + 1.2, STREET_Z1 - 0.6]]
+      : [[STREET_Z0 + 1.2, -ALLEY_WIDTH / 2 - 0.5], [ALLEY_WIDTH / 2 + 0.5, STREET_Z1 - 0.6]];
+    let best = z;
+    let bestD = 1e9;
+    for (const [from, to] of runs) {
+      const len = to - from;
+      const n = Math.max(2, Math.floor(len / 4.4));
+      for (let i = 0; i < n; i += 1) {
+        const a = from + (i / n) * len;
+        const b = from + ((i + 1) / n) * len;
+        const mid = (a + b) / 2;
+        const d = Math.abs(mid - z);
+        if (d < bestD) { bestD = d; best = mid; }
+      }
+    }
+    return best;
   };
   for (const unit of city.shops) {
     if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
     // The same side as the shop: nx points from the shop into the street, so
     // -nx is the near kerb.
     const x = -unit.nx * PARK_X;
-    spots.push({ x, z: bay(unit.z - 1.1), heading, y: PARK_Y });
-    spots.push({ x, z: bay(unit.z + 1.1), heading, y: PARK_Y });
+    spots.push({ x, z: bay(Math.sign(x) || 1, unit.z - 1.1), heading, y: PARK_Y });
+    spots.push({ x, z: bay(Math.sign(x) || 1, unit.z + 1.1), heading, y: PARK_Y });
   }
   // Extra pairs along both sides so mid-street framing is not empty.
   for (const side of [-1, 1] as const) {
     const x = side * PARK_X;
     for (let z = STREET_Z0 + 25; z < STREET_Z1 - 25; z += 45) {
-      spots.push({ x, z: bay(z - 0.9), heading, y: PARK_Y });
-      spots.push({ x, z: bay(z + 0.9), heading, y: PARK_Y });
+      spots.push({ x, z: bay(side, z - 0.9), heading, y: PARK_Y });
+      spots.push({ x, z: bay(side, z + 0.9), heading, y: PARK_Y });
     }
   }
   await addPolyEbikes(scene, spots);

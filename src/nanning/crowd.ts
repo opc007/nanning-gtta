@@ -66,7 +66,7 @@ const CROWD_PANIC_TIME = 3.5; // seconds running from you after a punch
 const CROWD_FLEE_SPEED = 5; // m/s
 const CROWD_AID_RADIUS = 8; // how far a friend has to be to notice the punch
 const CROWD_AID_CHANCE = 0.5; // ...and how likely they are to care enough
-const CROWD_FIGHT_REACH = 2.0; // swinging distance
+const CROWD_FIGHT_REACH = 2.8; // swinging distance
 const CROWD_FIGHT_SPEED = 2.9; // closing speed
 const CROWD_SWING_DAMAGE = 7; // health the player loses per swing
 const CROWD_SWING_COOLDOWN = 1.35; // seconds between swings
@@ -87,7 +87,7 @@ const GRAVITY = 18;
  * width of daylight between two people and the street reads as one clot.
  * 1.45 m puts real air between them.
  */
-const CROWD_GAP = 1.45;
+const CROWD_GAP = 1.8;
 
 /** Draw a line of text into a rounded bubble sprite. */
 function makeBubble(): THREE.Sprite {
@@ -469,9 +469,12 @@ export class Crowd {
       // carrier's neck. At three-quarter size, slung down the back, the
       // boots hang behind the carrier and the head clears the shoulder.
       t.group.scale.setScalar(0.72);
-      t.group.position.set(px - rx * 0.3 - fx * 0.42, 1.24, pz - rz * 0.3 - fz * 0.42);
-      // Draped: the body lies down the back, head over the far shoulder.
-      t.group.rotation.set(0.35, heading, -0.5);
+      // Over the shoulders, high enough to clear the carrier's own head, so
+      // the carry reads from the front and not as somebody crouching behind.
+      t.group.position.set(px - rx * 0.16 - fx * 0.3, 1.52, pz - rz * 0.16 - fz * 0.3);
+      // Draped across the shoulders: the body lies along the line of the
+      // shoulders, head to one side, boots to the other.
+      t.group.rotation.set(0, heading, -1.15);
       t.x = t.group.position.x;
       t.z = t.group.position.z;
       return;

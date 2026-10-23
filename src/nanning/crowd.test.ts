@@ -76,8 +76,9 @@ describe('Crowd — street rules', () => {
     expect(t.group.position.x).toBeGreaterThan(4.4);
     expect(t.group.position.x).toBeLessThan(4.75);
     expect(t.group.position.z).toBeLessThan(6.85);
-    expect(t.group.position.y).toBeCloseTo(1.24, 2);
+    expect(t.group.position.y).toBeCloseTo(1.52, 2);
     expect(t.group.scale.x).toBeCloseTo(0.72, 2);
-    expect(t.group.rotation.z).toBeLessThan(-0.4);
+    // The body lies across the line of the shoulders, not down the back.
+    expect(t.group.rotation.z).toBeLessThan(-1.0);
   });
 });
