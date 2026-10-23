@@ -469,12 +469,14 @@ export class Crowd {
       // carrier's neck. At three-quarter size, slung down the back, the
       // boots hang behind the carrier and the head clears the shoulder.
       t.group.scale.setScalar(0.72);
-      // Over the shoulders, high enough to clear the carrier's own head, so
-      // the carry reads from the front and not as somebody crouching behind.
-      t.group.position.set(px - rx * 0.16 - fx * 0.3, 1.52, pz - rz * 0.16 - fz * 0.3);
-      // Draped across the shoulders: the body lies along the line of the
-      // shoulders, head to one side, boots to the other.
-      t.group.rotation.set(0, heading, -1.15);
+      // Across the shoulders, the way you would actually carry somebody: the
+      // body lies along the line of the shoulders with the head out past one
+      // of them and the boots past the other. It used to be centred on the
+      // carrier, which put the carried person's head straight on top of the
+      // carrier's own — the two heads stacked, and the body looked upside
+      // down.
+      t.group.position.set(px + rx * 0.42 - fx * 0.12, 1.3, pz + rz * 0.42 - fz * 0.12);
+      t.group.rotation.set(0, heading, -1.35);
       t.x = t.group.position.x;
       t.z = t.group.position.z;
       return;

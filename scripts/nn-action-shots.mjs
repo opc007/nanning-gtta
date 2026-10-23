@@ -202,9 +202,21 @@ console.log('  → carry');
 
 // ── 3. Throw them ───────────────────────────────────────────────────────────
 await p.keyboard.press('KeyJ');
-await p.waitForTimeout(4500);
+// Wait for the body to actually be on the ground. A throw-knockdown picture
+// with everyone still standing is not a throw-knockdown picture.
+let down = 0;
+for (let i = 0; i < 20; i += 1) {
+  await p.waitForTimeout(1500);
+  down = await p.evaluate(() => {
+    const c = window.__nn.crowd;
+    const arr = c.talkers ?? c.people ?? [];
+    return arr.filter((t) => t.combat === 'down').length;
+  });
+  if (down > 0) break;
+}
+console.log('down before the shot', down);
 await wide(8.4, 3.4, 0.6);
-await p.waitForTimeout(1200);
+await p.waitForTimeout(2500);
 await p.screenshot({ path: `${OUT}/task8/throw-knockdown.png`, timeout: 600000 });
 console.log('  → throw-knockdown');
 const thrown = await p.evaluate(() => {

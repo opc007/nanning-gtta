@@ -73,12 +73,15 @@ describe('Crowd — street rules', () => {
     // Facing +X with heading 0. The person goes over the shoulder: behind
     // the carrier, down their back, and at three-quarter size so their boots
     // hang behind instead of burying themselves in the carrier's neck.
-    expect(t.group.position.x).toBeGreaterThan(4.4);
-    expect(t.group.position.x).toBeLessThan(4.75);
-    expect(t.group.position.z).toBeLessThan(6.85);
-    expect(t.group.position.y).toBeCloseTo(1.52, 2);
+    // Slightly behind the carrier and out to one side, at shoulder height:
+    // the body lies along the line of the shoulders with the head past one
+    // of them, not stacked on top of the carrier's head.
+    expect(t.group.position.x).toBeGreaterThan(4.7);
+    expect(t.group.position.x).toBeLessThan(5.05);
+    expect(t.group.position.z).toBeGreaterThan(7.2);
+    expect(t.group.position.y).toBeCloseTo(1.3, 2);
     expect(t.group.scale.x).toBeCloseTo(0.72, 2);
     // The body lies across the line of the shoulders, not down the back.
-    expect(t.group.rotation.z).toBeLessThan(-1.0);
+    expect(t.group.rotation.z).toBeLessThan(-1.2);
   });
 });
