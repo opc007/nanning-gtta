@@ -23,6 +23,8 @@ import {
 import { nightMarketOpen } from './clock';
 import { makeBanyanGeometry, makeSignTexture } from '../render/nnArch';
 import type { ShopVisual } from '../render/modernCity';
+import { loadArcadeParts, buildColonnade, recolorWall } from '../render/arcadeKit';
+import { addPolyLanterns, addPolyEbikes } from '../render/polyProps';
 
 const merge = (parts: THREE.BufferGeometry[]): THREE.BufferGeometry =>
   mergeGeometries(parts) as THREE.BufferGeometry;
@@ -173,7 +175,17 @@ function mulberry(seed: number): () => number {
   };
 }
 
+/** One bay of end-of-street railing, breakable by ramming it. */
+export interface BarrierSegment {
+  mesh: THREE.Mesh;
+  /** Footprint in world space, used for the push-out and the ram test. */
+  box: { minX: number; maxX: number; minZ: number; maxZ: number };
+  broken: boolean;
+}
+
 export interface StreetScenery {
+  /** End-of-street railings, in bays. Ram one hard enough and it goes. */
+  barriers: BarrierSegment[];
   /** Night-market group. Hidden before 18:00. */
   stalls: THREE.Group;
   stallMeshes: Map<number, ShopVisual>;
@@ -181,7 +193,10 @@ export interface StreetScenery {
   signMats: THREE.MeshBasicMaterial[];
 }
 
-const COL_H = 3.15;
+// Clear height of the covered walkway. 3.15 m put the shop fascia boards flush
+// against the ceiling, so from the street you read the bottom edge of a sign and
+// nothing else — the boards have to sit well clear of the soffit to be readable.
+const COL_H = 4.5;
 
 function arcadeSlabs(): THREE.BufferGeometry[] {
   const parts: THREE.BufferGeometry[] = [];
@@ -189,9 +204,16 @@ function arcadeSlabs(): THREE.BufferGeometry[] {
   const h = ARCADE_RAISE;
   const span = (z0: number, z1: number, side: -1 | 1): void => {
     const cx = side * (STREET_HALF + ARCADE_DEPTH / 2);
-    parts.push(box(ARCADE_DEPTH, h, z1 - z0, cx, y, (z0 + z1) / 2, 0x6d7370));
+    // No ground-floor mass. A 骑楼 is a covered walkway: the upper floor
+    // overhangs the pavement and stands on the columns, and the ground under
+    // it is open. It used to be a solid block, which meant the covered
+    // walkway could not be walked in, the parked e-bikes had nowhere to go
+    // except the traffic lane, and the night market had to stand in the
+    // middle of the road to fit its three-metre stalls.
+    void y;
+    void h;
     // Lip at the carriageway edge so the 15 cm step reads from the street.
-    parts.push(box(0.08, h, z1 - z0, side * STREET_HALF, y, (z0 + z1) / 2, 0x8a8478));
+    parts.push(box(0.08, ARCADE_RAISE, z1 - z0, side * STREET_HALF, ARCADE_RAISE / 2, (z0 + z1) / 2, 0x8a8478));
     // Ceiling, then the upper floors that actually cover the walkway.
     parts.push(box(ARCADE_DEPTH + 0.12, 0.22, z1 - z0, cx, COL_H, (z0 + z1) / 2, 0x7c756c));
     parts.push(box(ARCADE_DEPTH, 3.5, z1 - z0, cx - side * 0.04, COL_H + 0.22 + 1.75, (z0 + z1) / 2, 0x8a8680));
@@ -204,30 +226,43 @@ function arcadeSlabs(): THREE.BufferGeometry[] {
   return parts;
 }
 
-function columnRun(): THREE.BufferGeometry[] {
-  const parts: THREE.BufferGeometry[] = [];
-  const step = 4.4;
-  for (let z = STREET_Z0 + 1.2; z < STREET_Z1 - 0.6; z += step) {
-    for (const side of [-1, 1] as const) {
-      if (side < 0 && Math.abs(z) < ALLEY_WIDTH / 2 + 0.4) continue;
-      const x = side * STREET_HALF;
-      parts.push(box(0.32, COL_H, 0.32, x, COL_H / 2, z, 0x9c968b));
-      parts.push(box(0.48, 0.16, 0.48, x, COL_H - 0.08, z, 0xb7b1a6));
-    }
-  }
-  return parts;
-}
 
-function barrierRun(): THREE.BufferGeometry[] {
-  const parts: THREE.BufferGeometry[] = [];
+const BARRIER_BAY = 3.0; // metres of railing per breakable section
+const BARRIER_HALF = 18; // railing spans x ∈ [-18, 18]
+
+/**
+ * End-of-street railings, built as separate bays rather than one merged mesh.
+ *
+ * Merged, they were scenery: solid to look at, impossible to get past, and the
+ * street dead-ended at both ends no matter what you drove. As individual bays
+ * each one owns an AABB, so the session can push a walker out of the intact
+ * ones and let a car knock the rest flat — which is what a set of wooden
+ * street barriers on a real 中山路 would do.
+ */
+function barrierRun(): BarrierSegment[] {
+  const out: BarrierSegment[] = [];
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75 });
   for (const z of [STREET_Z0 - 0.2, STREET_Z1 + 0.2]) {
-    parts.push(box(36, 0.08, 0.08, 0, 0.95, z, 0xd5d8de));
-    parts.push(box(36, 0.08, 0.08, 0, 0.55, z, 0xd5d8de));
-    for (let x = -16; x <= 16; x += 2.4) {
-      parts.push(box(0.08, 1.15, 0.08, x, 0.58, z, 0x9aa0a8));
+    for (let x0 = -BARRIER_HALF; x0 < BARRIER_HALF; x0 += BARRIER_BAY) {
+      const w = Math.min(BARRIER_BAY, BARRIER_HALF - x0);
+      const cx = x0 + w / 2;
+      const parts: THREE.BufferGeometry[] = [];
+      parts.push(box(w, 0.08, 0.08, cx, 0.95, z, 0xd5d8de));
+      parts.push(box(w, 0.08, 0.08, cx, 0.55, z, 0xd5d8de));
+      for (let px = x0 + 0.3; px < x0 + w; px += 1.5) {
+        parts.push(box(0.08, 1.15, 0.08, px, 0.58, z, 0x9aa0a8));
+      }
+      const mesh = new THREE.Mesh(merge(parts), mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      out.push({
+        mesh,
+        box: { minX: cx - w / 2, maxX: cx + w / 2, minZ: z - 0.16, maxZ: z + 0.16 },
+        broken: false,
+      });
     }
   }
-  return parts;
+  return out;
 }
 
 function alleyClutter(city: NanningCity): THREE.BufferGeometry[] {
@@ -280,6 +315,70 @@ function stallVisuals(
   return { meshes: map, signMats };
 }
 
+/**
+ * Storefront signboards on the qilou facade itself.
+ *
+ * The arcade, the columns and the stall boards were all here already; what was
+ * missing was the one thing that makes the street read as 中山路 rather than as
+ * a generic covered walkway — the shop's name over its own door. 复记老友粉,
+ * 中山粉饺, 阿光豆浆油条, all of it was in the data and none of it was on a wall.
+ *
+ * Placed above the 3.3 m overhang so the covered walkway stays walkable, sized
+ * off the unit's real frontage, and keyed by building so the shop system can
+ * swap in the "砸烂咗" texture when the player trashes the place.
+ */
+function facadeSigns(
+  city: NanningCity,
+  parent: THREE.Group,
+): { meshes: Map<number, ShopVisual>; signMats: THREE.MeshBasicMaterial[] } {
+  const map = new Map<number, ShopVisual>();
+  const signMats: THREE.MeshBasicMaterial[] = [];
+  for (const unit of city.shops) {
+    if (unit.nightOnly) continue; // stalls already carry their own board
+    const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(unit.def), toneMapped: false });
+    // Daytime boards are painted, not lit. Night stays under the bloom blowout
+    // threshold so the characters stay readable instead of washing to white.
+    signMat.userData.dayK = 0.88;
+    signMat.userData.nightK = 0.72;
+    signMat.userData.shopDriven = true;
+    signMats.push(signMat);
+    // Shopfronts stay open through the day, so their interior light is on from
+    // dawn rather than ramping with the night market.
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x1b2228,
+      emissive: 0xffb768,
+      // Soft shop glow — high enough to read as open, low enough that bloom
+      // does not white-out the fascia characters at dusk.
+      emissiveIntensity: 0.32,
+      roughness: 0.4,
+    });
+
+    const w = Math.max(2.4, Math.min(unit.width - 0.7, 6.4));
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.25), signMat);
+    // Face the middle of the street. Plane normal +Z, so ±π/2 turns it onto ±X.
+    const face = unit.x < 0 ? Math.PI / 2 : -Math.PI / 2;
+    // Nudge proud of the facade along its own normal so it never z-fights.
+    sign.position.set(unit.x + unit.nx * 0.35, 3.78, unit.z + unit.nz * 0.35);
+    sign.rotation.y = face;
+    parent.add(sign);
+
+    // Neon underline, the strip that carries the shop colour after dark.
+    const neonMat = new THREE.MeshBasicMaterial({
+      color: unit.def.signColor,
+      toneMapped: false,
+      transparent: true,
+      opacity: 0.45,
+    });
+    const neon = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.96, 0.07), neonMat);
+    neon.position.set(unit.x + unit.nx * 0.37, 3.42, unit.z + unit.nz * 0.37);
+    neon.rotation.y = face;
+    parent.add(neon);
+
+    map.set(unit.building, { sign, signMat, neon: neonMat, glass, litMats: [neonMat] });
+  }
+  return { meshes: map, signMats };
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 export function addNanningScenery(scene: THREE.Scene, city: NanningCity): StreetScenery {
@@ -309,13 +408,25 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): Street
     scene.add(mesh);
   }
 
+  const barriers = barrierRun();
+  const barrierRoot = new THREE.Group();
+  barrierRoot.name = 'nn-barriers';
+  for (const b of barriers) barrierRoot.add(b.mesh);
+  scene.add(barrierRoot);
+
+  // Slabs + alley clutter stay procedural (metre-perfect to the surveyed
+  // street). Columns used to be boxes in the same merge; they now come from
+  // the Kenney Building Kit via `mountKenneyArcade`, so this mesh is slabs only.
   const dress = new THREE.Mesh(
-    merge([...arcadeSlabs(), ...columnRun(), ...barrierRun(), ...alleyClutter(city)]),
+    merge([...arcadeSlabs(), ...alleyClutter(city)]),
     new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0.04 }),
   );
   dress.castShadow = true;
   dress.receiveShadow = true;
   scene.add(dress);
+  void mountKenneyArcade(scene);
+  void mountPolyLanterns(scene, city);
+  void mountPolyEbikes(scene, city);
 
   const stallRoot = new THREE.Group();
   stallRoot.name = 'nn-stalls';
@@ -333,8 +444,168 @@ export function addNanningScenery(scene: THREE.Scene, city: NanningCity): Street
   const { meshes: stallMeshes, signMats: stallSignMats } = stallVisuals(city, stallRoot);
   scene.add(stallRoot);
 
+  // Storefront boards go in their own root, NOT in stallRoot: the session hides
+  // the stall group until 18:00, and these have to be readable at noon.
+  const signRoot = new THREE.Group();
+  signRoot.name = 'nn-facade-signs';
+  const { meshes: facadeMeshes, signMats: facadeSignMats } = facadeSigns(city, signRoot);
+  for (const [k, v] of facadeMeshes) stallMeshes.set(k, v);
+  scene.add(signRoot);
+
   addLanterns(scene);
-  return { stalls: stallRoot, stallMeshes, signMats: stallSignMats };
+  return { barriers, stalls: stallRoot, stallMeshes, signMats: [...stallSignMats, ...facadeSignMats] };
+}
+
+/**
+ * Kenney Building Kit colonnade along both 骑楼 edges.
+ *
+ * Canvas shop signs stay where they are — only the columns / window band come
+ * from the kit. Wall recolour goes through a copied colormap band (`recolorWall`),
+ * never `material.color`, per the brief.
+ */
+async function mountKenneyArcade(scene: THREE.Scene): Promise<void> {
+  const parts = await loadArcadeParts();
+  if (!parts) return;
+  // Soft cream wall band for the kit material — copy the atlas, paint one strip.
+  if (parts.material.map) {
+    const cream = recolorWall(parts.material.map, 0.35, 0.72, [214, 204, 184]);
+    parts.material = parts.material.clone();
+    parts.material.map = cream;
+    parts.material.color.set(0xffffff);
+    parts.material.needsUpdate = true;
+  }
+  const root = new THREE.Group();
+  root.name = 'nn-kenney-arcade';
+  const runs: { from: THREE.Vector3; to: THREE.Vector3; flip?: boolean }[] = [
+    { from: new THREE.Vector3(STREET_HALF, 0, STREET_Z0 + 1.2), to: new THREE.Vector3(STREET_HALF, 0, STREET_Z1 - 0.6) },
+    {
+      from: new THREE.Vector3(-STREET_HALF, 0, STREET_Z0 + 1.2),
+      to: new THREE.Vector3(-STREET_HALF, 0, -ALLEY_WIDTH / 2 - 0.5),
+      flip: true,
+    },
+    {
+      from: new THREE.Vector3(-STREET_HALF, 0, ALLEY_WIDTH / 2 + 0.5),
+      to: new THREE.Vector3(-STREET_HALF, 0, STREET_Z1 - 0.6),
+      flip: true,
+    },
+  ];
+  for (const run of runs) {
+    const mesh = buildColonnade(parts, {
+      from: run.from,
+      to: run.to,
+      spacing: 4.4,
+      height: COL_H,
+      girth: 0.34,
+      flip: run.flip,
+    });
+    if (mesh) root.add(mesh);
+  }
+  // A window band above the overhang on the east frontage — Building Kit
+  // `wall-window-wide-square-detailed`, one merged mesh, keeps draw calls low.
+  if (parts.window) {
+    const wins: THREE.BufferGeometry[] = [];
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+    const step = 8.8;
+    for (let z = STREET_Z0 + 4; z < STREET_Z1 - 4; z += step) {
+      m.compose(
+        new THREE.Vector3(STREET_HALF + ARCADE_DEPTH * 0.55, COL_H + 1.6, z),
+        q,
+        new THREE.Vector3(1.1, 1.1, 1.1),
+      );
+      wins.push(parts.window.clone().applyMatrix4(m));
+    }
+    if (wins.length) {
+      const merged = merge(wins);
+      const winMesh = new THREE.Mesh(merged, parts.material);
+      winMesh.castShadow = true;
+      winMesh.receiveShadow = true;
+      root.add(winMesh);
+    }
+  }
+  scene.add(root);
+}
+
+/** Poly Pizza red lanterns at the four warm shop doorheads (CC-BY credited). */
+async function mountPolyLanterns(scene: THREE.Scene, city: NanningCity): Promise<void> {
+  const WARM = new Set(['fuji', 'zhongshan-fenjiao', 'rongji', 'hengzhou']);
+  const spots: { x: number; y: number; z: number }[] = [];
+  for (const unit of city.shops) {
+    if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
+    const y = COL_H - 0.35;
+    spots.push({
+      x: unit.x + unit.nx * 0.55,
+      y,
+      z: unit.z - unit.width * 0.22,
+    });
+    spots.push({
+      x: unit.x + unit.nx * 0.55,
+      y,
+      z: unit.z + unit.width * 0.22,
+    });
+  }
+  await addPolyLanterns(scene, spots);
+}
+
+/**
+ * Poly Pizza scooters parked at the kerb (CC-BY). Warm-shop pairs plus a
+ * spaced kerb run so fuji-door and night-street stills both catch them.
+ */
+async function mountPolyEbikes(scene: THREE.Scene, city: NanningCity): Promise<void> {
+  const WARM = new Set(['fuji', 'zhongshan-fenjiao', 'rongji', 'hengzhou']);
+  const spots: { x: number; z: number; heading: number; y?: number }[] = [];
+  // Parked along the street, not across it. A scooter is nearly two metres
+  // long: laid across the carriageway it reached from the columns to the
+  // shopfronts, and its handlebars were inside the columns.
+  const heading = Math.PI / 2;
+  // Under the arcade, clear of the columns, on the raised pavement.
+  const PARK_X = STREET_HALF + 0.95;
+  const PARK_Y = ARCADE_RAISE;
+  // The colonnade stands a column every few metres along the kerb, and a
+  // scooter is 1.85 m long. Parked at the shopfront it straddles one, with
+  // its front wheel inside it — so park it in the gap between two columns.
+  //
+  // The columns are not on a round number: the two frontages have different
+  // lengths (there is an alley on the west side) and the pitch is the run's
+  // length divided by the number of bays. So the column positions have to
+  // be worked out the same way the colonnade works them out, and the
+  // scooter dropped into the middle of the widest gap.
+  const bay = (side: number, z: number): number => {
+    const runs = side > 0
+      ? [[STREET_Z0 + 1.2, STREET_Z1 - 0.6]]
+      : [[STREET_Z0 + 1.2, -ALLEY_WIDTH / 2 - 0.5], [ALLEY_WIDTH / 2 + 0.5, STREET_Z1 - 0.6]];
+    let best = z;
+    let bestD = 1e9;
+    for (const [from, to] of runs) {
+      const len = to - from;
+      const n = Math.max(2, Math.floor(len / 4.4));
+      for (let i = 0; i < n; i += 1) {
+        const a = from + (i / n) * len;
+        const b = from + ((i + 1) / n) * len;
+        const mid = (a + b) / 2;
+        const d = Math.abs(mid - z);
+        if (d < bestD) { bestD = d; best = mid; }
+      }
+    }
+    return best;
+  };
+  for (const unit of city.shops) {
+    if (!WARM.has(unit.def.id) || unit.nightOnly) continue;
+    // The same side as the shop: nx points from the shop into the street, so
+    // -nx is the near kerb.
+    const x = -unit.nx * PARK_X;
+    spots.push({ x, z: bay(Math.sign(x) || 1, unit.z - 1.1), heading, y: PARK_Y });
+    spots.push({ x, z: bay(Math.sign(x) || 1, unit.z + 1.1), heading, y: PARK_Y });
+  }
+  // Extra pairs along both sides so mid-street framing is not empty.
+  for (const side of [-1, 1] as const) {
+    const x = side * PARK_X;
+    for (let z = STREET_Z0 + 25; z < STREET_Z1 - 25; z += 45) {
+      spots.push({ x, z: bay(side, z - 0.9), heading, y: PARK_Y });
+      spots.push({ x, z: bay(side, z + 0.9), heading, y: PARK_Y });
+    }
+  }
+  await addPolyEbikes(scene, spots);
 }
 
 function addLanterns(scene: THREE.Scene): void {

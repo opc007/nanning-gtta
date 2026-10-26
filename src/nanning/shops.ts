@@ -46,6 +46,8 @@ export interface ShopEvent {
   /** Heat to add to the base game's wanted system. 0 = no heat. */
   heat: number;
   shopId: string;
+  /** How much this meal filled you up, in satiety points. Bought events only. */
+  fill?: number;
 }
 
 export class Shops {
@@ -201,6 +203,7 @@ export class Shops {
       text: `${item.name} ¥${item.price} — ${item.blurb}`,
       heat: 0,
       shopId: s.unit.id,
+      fill: item.fill,
     };
   }
 

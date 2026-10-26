@@ -23,6 +23,12 @@ export interface SceneQuality {
 // In streamed mode the shadow frustum is a tight window around the player rather
 // than the whole (unbounded) world.
 const STREAM_SHADOW_HALF = 90;
+// 中山路 is a finite 300 m street, but its shadow frustum was sized to the whole
+// map: a 2048² map stretched across ±MAP_HALF is about half a metre per texel, so
+// the shadows were both ugly and — the real cost — every object on the map was
+// drawn into the shadow pass each frame. A ±70 m window around the player is
+// 6 cm per texel and only the block you can actually see goes in.
+const FIXED_SHADOW_HALF = 70;
 
 // Night (t=0, the original look) ↔ day palette, lerped by the daylight factor.
 const NIGHT = {
@@ -57,11 +63,23 @@ export class SceneEnv {
 
   constructor(container: HTMLElement, city: City, quality: SceneQuality = {}) {
     const maxPixelRatio = quality.maxPixelRatio ?? 2;
-    const shadowMapSize = quality.shadowMapSize ?? 2048;
+    // 1024, not 2048. A 2048² map is 4.2 Mpx — measured against a 320x200 canvas
+    // at 0.064 Mpx, the shadow pass was drawing ~65x more pixels than the view
+    // the player was actually looking at, and it did that every frame. That is
+    // the fixed per-frame cost that made the game resolution-independent in
+    // the worst way: 0.23 fps at 1000x620 and 0.85 fps at 320x200, because the
+    // canvas was never the bottleneck. Paired with the ±70 m follow window,
+    // 1024 still gives ~14 cm shadow texels, which is fine for a street.
+    const shadowMapSize = quality.shadowMapSize ?? 512;
     this.streaming = !!quality.streaming;
     // Finite world: the shadow frustum spans the whole map. Streamed world: a
     // tight window that follows the player (city.half is effectively unbounded).
-    this.shadowHalf = this.streaming ? STREAM_SHADOW_HALF : city.half;
+    // A finite city is still walked through; a tight window beats covering the
+    // whole map unless the map is small enough that the window is the map.
+    this.shadowHalf =
+      this.streaming || city.half > FIXED_SHADOW_HALF
+        ? (this.streaming ? STREAM_SHADOW_HALF : FIXED_SHADOW_HALF)
+        : city.half;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxPixelRatio));
@@ -75,6 +93,7 @@ export class SceneEnv {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x141a2e);
+    this.addEnvironment();
     this.scene.fog = new THREE.Fog(0x141a2e, city.extent * 0.18, city.extent * 0.7);
 
     this.camera = new THREE.PerspectiveCamera(
@@ -96,6 +115,45 @@ export class SceneEnv {
     window.addEventListener('orientationchange', this.onResize);
   }
 
+  /**
+   * An environment for the metals and the glass to reflect.
+   *
+   * There was none, so every car had nothing to catch the light with: no
+   * highlight along the bonnet, no sheen on the windscreen, and a half-metal
+   * paint that went black in the arcade's shadow. A four-pixel-wide gradient
+   * — sky above, warm street below — is enough for the reflections to land.
+   */
+  private addEnvironment(): void {
+    try {
+      const W = 4;
+      const H = 32;
+      const data = new Uint8Array(W * H * 4);
+      const sky = [0.62, 0.72, 0.86];
+      const ground = [0.42, 0.38, 0.32];
+      for (let y = 0; y < H; y += 1) {
+        const t = y / (H - 1);
+        const k = Math.pow(1 - t, 1.6);
+        for (let x = 0; x < W; x += 1) {
+          const i = (y * W + x) * 4;
+          data[i] = Math.round(255 * (ground[0] + (sky[0] - ground[0]) * k));
+          data[i + 1] = Math.round(255 * (ground[1] + (sky[1] - ground[1]) * k));
+          data[i + 2] = Math.round(255 * (ground[2] + (sky[2] - ground[2]) * k));
+          data[i + 3] = 255;
+        }
+      }
+      const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromEquirectangular(tex).texture;
+      pmrem.dispose();
+      tex.dispose();
+    } catch {
+      // No environment is survivable — it only costs the reflections.
+    }
+  }
+
   private addLights(city: City, shadowMapSize: number): void {
     this.ambient = new THREE.AmbientLight(NIGHT.ambient.color, NIGHT.ambient.intensity);
     this.scene.add(this.ambient);
@@ -114,6 +172,13 @@ export class SceneEnv {
     cam.bottom = -this.shadowHalf;
     cam.near = 1;
     cam.far = city.extent * 2.5;
+    // The frustum was being set and then never applied. `left`/`right`/`top`/
+    // `bottom` are just numbers; the projection matrix is what the renderer
+    // actually uses, and it is only recomputed when you ask. Without this the
+    // shadow camera kept the whole-map frustum it was built with, so every
+    // building in the city was drawn into the shadow map every frame — 198 of
+    // them, ninety thousand triangles, none of them anywhere near the player.
+    cam.updateProjectionMatrix();
     sun.shadow.bias = -0.0006;
     this.scene.add(sun);
     this.scene.add(sun.target); // target stays at origin; moving the light sweeps shadows
@@ -198,10 +263,10 @@ export class SceneEnv {
    * from these in `setTimeOfDay`, which runs every frame). No-op when finite.
    */
   follow(x: number, z: number): void {
-    if (!this.streaming) return;
     this.followX = x;
     this.followZ = z;
-    this.ground.position.set(x, 0, z);
+    // Ground is infinite only in the streamed world; the finite city has its own.
+    if (this.streaming) this.ground.position.set(x, 0, z);
   }
 
   private addRoads(city: City): void {
@@ -225,20 +290,107 @@ export class SceneEnv {
   }
 
   /**
+   * Adaptive quality. Fed the real frame time each frame, this walks the
+   * expensive knobs down when the device cannot keep up and back up when it can.
+   *
+   * Resolution is the first thing to go and the last thing to be missed: pixel
+   * count scales the whole pipeline — shadow pass, main pass, and every bloom
+   * blur tap on top. Bloom is the last to go because it is the whole night
+   * street, and a soft image is a worse complaint than a hard one.
+   *
+   * Hysteresis is deliberate: the thresholds do not overlap, so a machine
+   * sitting near the boundary cannot oscillate between two settings forever.
+   */
+  private qScale = 1;
+  private qBloom = true;
+  private qAccum = 0;
+  private qFrames = 0;
+
+  /** Cheap → expensive steps. Index 0 is what a struggling device gets. */
+  static readonly QUALITY_STEPS = [
+    { scale: 0.6, bloom: false },
+    { scale: 0.75, bloom: false },
+    { scale: 1.0, bloom: false },
+    { scale: 1.0, bloom: true },
+  ];
+
+  /**
+   * @param frameTime seconds for the frame just rendered
+   * @returns true if the quality level changed this frame
+   */
+  adaptQuality(frameTime: number, maxPixelRatio: number): boolean {
+    if (!(frameTime > 0)) return false;
+    this.qAccum += frameTime;
+    this.qFrames++;
+    // Judge on a window long enough to ride out a stutter but short enough that
+    // the picture is not left ugly for a second after the machine settles.
+    // 90 frames, not 45. Each step calls setPixelRatio, which reallocates the
+    // drawing buffer — doing that every two seconds on a device that is already
+    // struggling is how you talk a weak GPU into losing its context. Decide
+    // less often, and never step twice in a row without a fresh measurement.
+    if (this.qFrames < 90) return false;
+    const avg = this.qAccum / this.qFrames;
+    this.qAccum = 0;
+    this.qFrames = 0;
+
+    const level = SceneEnv.QUALITY_STEPS.indexOf(
+      SceneEnv.QUALITY_STEPS.find((s) => s.scale === this.qScale && s.bloom === this.qBloom)!,
+    );
+    let next = level;
+    if (avg > 1 / 34) next = Math.max(0, level - 1); // under ~34 fps: cheaper
+    else if (avg < 1 / 56) next = Math.min(SceneEnv.QUALITY_STEPS.length - 1, level + 1); // over ~56 fps
+    if (next === level) return false;
+
+    const s = SceneEnv.QUALITY_STEPS[next];
+    this.qScale = s.scale;
+    this.qBloom = s.bloom;
+    this.renderer.setPixelRatio(
+      Math.max(0.4, Math.min(window.devicePixelRatio, maxPixelRatio) * s.scale),
+    );
+    // A lost context leaves the ladder pointing at settings nothing is drawing
+    // with. Reset it so the next successful frame starts from the top again.
+    this.renderer.domElement.addEventListener(
+      'webglcontextrestored',
+      () => { this.qAccum = 0; this.qFrames = 0; },
+      { once: true },
+    );
+    if (this.bloomPass) this.bloomPass.enabled = s.bloom;
+    return true;
+  }
+
+  /**
    * Bloom is the single biggest "细腻" upgrade available for a night street: it
    * is what turns an emissive signboard from a flat bright rectangle into
    * something that actually glows onto the wall next to it. Falls back to a
    * direct render when the composer is off (mobile) or unavailable.
    */
+  /**
+   * Draw calls and triangles for the whole frame — shadow pass, scene pass and
+   * every post-process tap included.
+   *
+   * `renderer.info` resets itself on every `render()` call, so reading it after
+   * the composer finished reports the last post-process quad and nothing else:
+   * one call, one triangle, for a frame that actually drew the street. The
+   * counters are only meaningful if the reset is moved to the start of the
+   * frame and the totals are read at the end.
+   */
+  readonly frameStats = { calls: 0, triangles: 0 };
+
   render(): void {
+    const info = this.renderer.info;
+    info.autoReset = false;
+    info.reset();
     if (this.composer) {
-      // Bloom tracks the day cycle: a noon sky must not bloom.
+      // Bloom tracks the day cycle: a noon sky must not bloom. Cap the night
+      // end so fascia characters stay readable (Issue #6 / PR #5: no white-out).
       const d = daylightFactor(this.lastTimeOfDay);
-      if (this.bloomPass) this.bloomPass.strength = 0.12 + 0.62 * (1 - d);
+      if (this.bloomPass) this.bloomPass.strength = 0.08 + 0.28 * (1 - d);
       this.composer.render();
     } else {
       this.renderer.render(this.scene, this.camera);
     }
+    this.frameStats.calls = info.render.calls;
+    this.frameStats.triangles = info.render.triangles;
   }
 
   private lastTimeOfDay = 0;

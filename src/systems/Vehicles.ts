@@ -60,7 +60,9 @@ interface Car {
 }
 
 const PLAYER_COLOR = 0x10a0c8;
-const TRAFFIC_COLORS = [0xb23a3a, 0x3a6db2, 0xd9b44a, 0x4ab36a, 0xcccccc, 0x2a2a2a, 0xc06a2a];
+// No near-black: with a dark glasshouse, a black car is a black slab. The
+// palette is light enough that every car on the street reads as a car.
+const TRAFFIC_COLORS = [0xb23a3a, 0x3a6db2, 0xd9b44a, 0x4ab36a, 0xcccccc, 0x9aa0a6, 0xc06a2a, 0x7a5fb0];
 
 const CAR_RADIUS = 1.9;
 const LANE_CORRECT = 2.2; // how hard AI steers back to lane centerline
@@ -73,6 +75,56 @@ const PED_LANE_HALF = 2.6; // how wide a car watches for a pedestrian in its pat
 const PED_STOP_GAP = 5; // distance ahead of a pedestrian a car aims to stop
 const PED_BRAKE_DECEL = 7; // braking authority used to compute a safe speed
 const PED_BRAKE_RATE = 5; // how hard the car decelerates toward that safe speed
+const CAR_GAP = 6.5; // metres a car keeps to the one in front of it
+/**
+ * The vehicles that drive on the street. The full list includes a 4.5-tonne
+ * hauler and a box van, and a hauler on a nine-metre 骑楼 street is both
+ * wrong and — being the flat black thing with a bed — the thing the review
+ * kept calling an unfinished box.
+ */
+const TRAFFIC_PROFILES = PROFILES.filter(
+  (p) => p.shapeId === 'sedan' || p.shapeId === 'compact' || p.shapeId === 'ebike',
+);
+/** A car's footprint: it is four metres long and not two metres round. */
+const CAR_HALF_LEN = 2.05;
+const CAR_HALF_WID = 0.92;
+
+/**
+ * Do two cars overlap, as boxes rather than as circles?
+ *
+ * The circle test used a 1.2 m radius, so it said two four-metre cars were
+ * clear with their centres 2.4 m apart — which is the length of one car. A
+ * green one drove straight into a brown one. Boxes, each in its own frame,
+ * do not have that problem.
+ */
+function obbOverlap(a: Car, b: Car): { nx: number; nz: number; depth: number } | null {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const axes: [number, number][] = [
+    [Math.cos(a.heading), -Math.sin(a.heading)],
+    [Math.sin(a.heading), Math.cos(a.heading)],
+    [Math.cos(b.heading), -Math.sin(b.heading)],
+    [Math.sin(b.heading), Math.cos(b.heading)],
+  ];
+  const radius = (c: Car, ux: number, uz: number): number =>
+    CAR_HALF_LEN * Math.abs(ux * Math.cos(c.heading) - uz * Math.sin(c.heading)) +
+    CAR_HALF_WID * Math.abs(ux * Math.sin(c.heading) + uz * Math.cos(c.heading));
+  let minDepth = Infinity;
+  let nx = 0;
+  let nz = 0;
+  for (const [ux, uz] of axes) {
+    const dist = dx * ux + dz * uz;
+    const overlap = radius(a, ux, uz) + radius(b, ux, uz) - Math.abs(dist);
+    if (overlap <= 0) return null; // a separating axis: they are clear
+    if (overlap < minDepth) {
+      minDepth = overlap;
+      const s = dist < 0 ? -1 : 1;
+      nx = ux * s;
+      nz = uz * s;
+    }
+  }
+  return { nx, nz, depth: minDepth };
+}
 const PED_REACH = CAR_RADIUS + 0.5; // contact distance for running a pedestrian over
 
 const POLICE_COLOR = 0x12131c;
@@ -134,19 +186,29 @@ export class Vehicles {
     this.spawn(scene, makeBody(PLAYER_COLOR, PLAYER_PROFILE.shapeId), PLAYER_COLOR, PLAYER_PROFILE, cs?.x ?? city.center.x, cs?.z ?? city.center.z, cs?.heading ?? 0, 'parked', null, 0);
 
     const rng = createRng(seed);
-    for (let i = 0; i < trafficCount && city.lanes.length > 0; i++) {
-      const lane = rng.pick(city.lanes);
-      const along = rng.range(-city.half, city.half);
+    // Weighted lane pick: a busy main street earns more cars than a back
+    // road, and a lane with no weight is asked for once.
+    const lanePool: Lane[] = [];
+    for (const lane of city.lanes) {
+      const w = Math.max(1, Math.round(lane.weight ?? 1));
+      for (let k = 0; k < w; k++) lanePool.push(lane);
+    }
+    for (let i = 0; i < trafficCount && lanePool.length > 0; i++) {
+      const lane = rng.pick(lanePool);
+      const lo = lane.span ? lane.span[0] : -city.half;
+      const hi = lane.span ? lane.span[1] : city.half;
+      const along = rng.range(lo, hi);
       const x = lane.axis === 'x' ? along : lane.fixed;
       const z = lane.axis === 'z' ? along : lane.fixed;
       const color = rng.pick(TRAFFIC_COLORS);
-      const profile = rng.pick(PROFILES);
-      this.spawn(scene, makeBody(color, profile.shapeId), color, profile, x, z, 0, 'ai', lane, rng.range(10, 22));
+      const profile = rng.pick(TRAFFIC_PROFILES);
+      const cruise = lane.cruise ?? rng.range(10, 22);
+      this.spawn(scene, makeBody(color, profile.shapeId), color, profile, x, z, 0, 'ai', lane, cruise);
     }
 
     for (const spot of city.parkingSpots) {
       const color = rng.pick(TRAFFIC_COLORS);
-      const profile = rng.pick(PROFILES);
+      const profile = rng.pick(TRAFFIC_PROFILES);
       this.spawn(scene, makeBody(color, profile.shapeId), color, profile, spot.x, spot.z, spot.heading, 'parked', null, 0);
     }
 
@@ -297,19 +359,39 @@ export class Vehicles {
   ): void {
     const lane = car.lane!;
     const half = city.half;
+    // How wide this lane's cars watch for people in their path.
+    const watch = lane.watch ?? PED_LANE_HALF;
 
-    // Wrap around the city edge so the loop of traffic never runs out.
+    // Wrap around so the loop of traffic never runs out. A lane with a span
+    // is a stretch of street with a beginning and an end, so the car wraps
+    // inside it rather than driving off past the last building.
+    const lo = lane.span ? lane.span[0] : -half;
+    const hi = lane.span ? lane.span[1] : half;
+    const len = hi - lo;
     if (lane.axis === 'x') {
-      if (car.x > half) car.x -= half * 2;
-      else if (car.x < -half) car.x += half * 2;
-    } else if (car.z > half) car.z -= half * 2;
-    else if (car.z < -half) car.z += half * 2;
+      if (car.x > hi) car.x -= len;
+      else if (car.x < lo) car.x += len;
+    } else if (car.z > hi) car.z -= len;
+    else if (car.z < lo) car.z += len;
 
     // Brake for a pedestrian standing in this car's path. The car only slows
     // as fast as PED_BRAKE_RATE allows, so darting in front from inside the
     // stopping distance gets you hit.
     let cruise = car.cruise;
     let rate = AI_RECOVER;
+
+    // Keep a gap to the car in front. Cars follow each other: without this a
+    // car that brakes for a pedestrian gets rear-ended by the one behind, and
+    // a street with traffic in it fills up with wrecks.
+    const gap = this.gapAhead(car, lane);
+    if (gap < Infinity) {
+      const safe = safeApproachSpeed(gap - CAR_GAP, PED_BRAKE_DECEL);
+      if (safe < cruise) {
+        cruise = safe;
+        rate = PED_BRAKE_RATE;
+      }
+    }
+
     if (pedestrian) {
       const ahead =
         lane.axis === 'x'
@@ -317,7 +399,7 @@ export class Vehicles {
           : (pedestrian.z - car.z) * lane.dir;
       const sideways =
         lane.axis === 'x' ? Math.abs(pedestrian.z - car.z) : Math.abs(pedestrian.x - car.x);
-      if (ahead > 0 && sideways < PED_LANE_HALF) {
+      if (ahead > 0 && sideways < watch) {
         const safe = safeApproachSpeed(ahead - PED_STOP_GAP, PED_BRAKE_DECEL);
         if (safe < cruise) {
           cruise = safe;
@@ -383,6 +465,38 @@ export class Vehicles {
    * instead of stacking), and obstacle avoidance (veer along a wall normal felt
    * ahead, so they don't grind buildings). Reynolds-style weighted accumulate.
    */
+  /**
+   * The gap to the nearest car ahead in the same lane, or Infinity.
+   * "Same lane" means the same side of the road: two lanes three metres
+   * apart are not a queue.
+   */
+  private gapAhead(car: Car, lane: Lane): number {
+    const along = (c: Car): number => (lane.axis === 'x' ? c.x : c.z);
+    const across = (c: Car): number => (lane.axis === 'x' ? c.z : c.x);
+    let best = Infinity;
+    for (const other of this.cars) {
+      if (other === car || !other.active) continue;
+      if (other.lane) {
+        // Only a car on the same lane, going the same way, is a car in front.
+        // Two lanes can share a coordinate without being anywhere near each
+        // other: a car driving north up 中山路 and a car driving east across
+        // it are not in a queue, and treating them as one stopped the traffic
+        // dead every time the two streets crossed.
+        if (other.lane.axis !== lane.axis) continue;
+        if (other.lane.dir !== lane.dir) continue;
+        if (Math.abs(other.lane.fixed - lane.fixed) > 1.2) continue;
+      } else if (Math.abs(across(other) - across(car)) > 2) {
+        // A car with no lane — the player's, or a parked one — only counts if
+        // it is plainly in the way.
+        continue;
+      }
+      const d = (along(other) - along(car)) * lane.dir;
+      if (d <= 0 || d > 40) continue;
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
   private drivePolice(
     car: Car,
     city: City,
@@ -551,7 +665,7 @@ export class Vehicles {
         const a = this.cars[i];
         const b = this.cars[j];
         if (!a.active || !b.active) continue;
-        const o = circleOverlap(a.x, a.z, b.x, b.z, CAR_RADIUS * 2);
+        const o = obbOverlap(a, b);
         if (!o) continue;
 
         // Separate mass-biased: the lighter car gives more ground.
@@ -743,6 +857,14 @@ export class Vehicles {
     if (this.playerIndex === null) return { vx: 0, vz: 0 };
     const c = this.cars[this.playerIndex];
     return { vx: c.vx, vz: c.vz };
+  }
+
+  /** Debug: what every car is doing right now. */
+  carStates(): Array<{ x: number; z: number; vx: number; vz: number; heading: number; role: string; active: boolean; lane: number }> {
+    return this.cars.map((c) => ({
+      x: +c.x.toFixed(2), z: +c.z.toFixed(1), vx: +c.vx.toFixed(2), vz: +c.vz.toFixed(2),
+      heading: +c.heading.toFixed(2), role: c.role, active: c.active, lane: c.lane ? c.lane.fixed : 0,
+    }));
   }
 
   positions(): Array<{ x: number; z: number }> {

@@ -6,6 +6,7 @@ import { makeFacadeTexture, makeGlowTexture } from './textures';
 
 import { makeCarBody, type BodyShape } from './vehicleBody';
 import { makeHumanoid, streetStyle } from './character';
+import { clonePolyEbike } from './polyProps';
 
 const LAMP_HEIGHT = 5.2;
 
@@ -294,11 +295,28 @@ export function makeCar(color: number, shape: CarShape = CAR_SHAPES[0]): CarMesh
 export const EBIKE_SHAPE: CarShape = CAR_SHAPES.find((s) => s.id === 'ebike')!;
 
 /**
- * 电瓶车 body. Step-through scooter silhouette: floorboard, battery box, seat,
- * leg shield, handlebar. Narrow enough (0.72 m) to feel wrong on a main road
- * and right on a pavement, which is the whole point.
+ * 电瓶车 body. Prefers the Poly Pizza Scooter GLB (Issue #6 ×0.042) when
+ * `preloadPolyEbike` has finished; otherwise the procedural step-through
+ * silhouette so boot never blocks on a missing file.
  */
 export function makeEbike(color: number, shape: CarShape = EBIKE_SHAPE): CarMesh {
+  const poly = clonePolyEbike();
+  if (poly) {
+    // Clone materials before tinting so parked street clones keep the author paint.
+    poly.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const src = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const next = src.map((mat) => {
+        if (!(mat instanceof THREE.MeshStandardMaterial) || mat.metalness <= 0.2) return mat;
+        const c = mat.clone();
+        c.color.setHex(color);
+        return c;
+      });
+      mesh.material = Array.isArray(mesh.material) ? next : next[0];
+    });
+    return { group: poly, steerWheels: [] };
+  }
   const group = new THREE.Group();
   const hl = shape.length / 2;
   const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.5 });

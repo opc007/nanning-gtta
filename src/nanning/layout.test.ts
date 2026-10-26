@@ -28,10 +28,10 @@ const sig = (c: NanningCity): string =>
 describe('中山路 layout', () => {
   const city = generateNanningCity(1945);
 
-  it('is a 300 m street, 9 m wide, with a 2.4 m raised arcade and 8 m shops', () => {
+  it('is a 300 m street, 9 m wide, with a 3 m arcade and 8 m shops', () => {
     expect(STREET_Z1 - STREET_Z0).toBe(300);
     expect(STREET_HALF * 2).toBeCloseTo(9);
-    expect(ARCADE_DEPTH).toBeCloseTo(2.4);
+    expect(ARCADE_DEPTH).toBeCloseTo(3.0);
     expect(ARCADE_RAISE).toBeCloseTo(0.15);
     expect(SHOP_DEPTH).toBeCloseTo(8);
     expect(ALLEY_WIDTH).toBe(4);
@@ -44,7 +44,7 @@ describe('中山路 layout', () => {
     const c = generateNanningCity(7);
     expect(sig(a)).toBe(sig(b));
     expect(sig(c)).toBe(sig(a));
-    expect(a.lanes.length).toBe(4);
+    expect(a.lanes.length).toBe(6); // two down 中山路, four on the back roads
     expect(c.lanes.length).toBe(a.lanes.length);
     expect(c.buildings.length).toBe(a.buildings.length);
   });
@@ -101,14 +101,44 @@ describe('中山路 layout', () => {
     expect(Math.hypot(blocked.x - backX, blocked.z - shop.z)).toBeGreaterThan(0.15);
   });
 
-  it('has no AI lanes or parked cars on the street', () => {
+  it('runs the traffic down the carriageway, and keeps it off the arcade', () => {
+    // This used to say the street had no traffic at all: 中山路 was a
+    // pedestrian street, and every car in the game was parked on a back road
+    // at the far end of the map. It made the street a corridor you could walk
+    // down without anything ever passing you. A nine-metre carriageway with
+    // a 骑楼 arcade on both sides fits two lanes, and the traffic is what
+    // makes it a street.
     expect(city.parkingSpots).toHaveLength(0);
     expect(city.lanes.length).toBeGreaterThan(0);
-    for (const lane of city.lanes) {
-      expect(lane.axis).toBe('x');
+
+    const street = city.lanes.filter((l) => l.axis === 'z');
+    expect(street.length).toBe(2);
+    for (const lane of street) {
+      // At the kerb: the traffic keeps to the sides and the middle of the
+      // street is left to walk down.
+      expect(Math.abs(lane.fixed)).toBeGreaterThan(2.6);
+      expect(Math.abs(lane.fixed)).toBeLessThan(3.6);
+      // It is an old street, not a boulevard: the cars creep.
+      expect(lane.cruise ?? 99).toBeLessThan(8);
+      // And they wrap inside the street rather than driving off the end.
+      expect(lane.span).toBeDefined();
+    }
+    // The back roads keep their traffic, and it is still out of the way.
+    for (const lane of city.lanes.filter((l) => l.axis === 'x')) {
       expect(Math.abs(lane.fixed)).toBeGreaterThan(150);
     }
     expect(Math.abs(city.carSpawn?.z ?? 0)).toBeGreaterThan(150);
+  });
+
+  it('leaves a clear walking lane down the middle of the carriageway', () => {
+    // Nothing may stand in the middle of the street: the cars keep to the
+    // kerb lanes, the stalls are under the arcade, and the people walk here.
+    for (const s of city.stalls) {
+      expect(Math.abs(s.x)).toBeGreaterThan(4);
+    }
+    for (const lane of city.lanes.filter((l) => l.axis === 'z')) {
+      expect(Math.abs(lane.fixed)).toBeGreaterThan(2.6);
+    }
   });
 
   it('drops the old districts', () => {

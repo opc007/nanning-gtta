@@ -4,9 +4,11 @@ import { generateNanningCity, type NanningCity } from './nanning/layout';
 import { SHOPS, STALLS } from './nanning/data';
 import { displayShopName, shopNameModeFrom } from './nanning/shopNames';
 import { NanningSession } from './session/nanningSession';
+import { createClipCharacter, type ClipCharacter } from './characters/clipRig';
 import { buildCharacter } from './characters/buildCharacter';
 import { PROTAGONIST } from './characters/protagonist';
 import { InteriorView } from './render/InteriorView';
+import { pickTarget, TargetMarker, type Target } from './systems/Targets';
 import { stepPlayer, type PlayerWorld } from './player/PlayerController';
 import { PLAYER } from './player/params';
 import { footprintOverlaps, type Aabb3 } from './systems/Collision';
@@ -31,6 +33,7 @@ import { lerp, angleLerp, angleDelta, starsFromHeat, daylightFactor } from './co
 import { Radio } from './audio/Radio';
 import { Sfx } from './audio/Sfx';
 import { toMph, type VehicleInput } from './vehicles/VehicleModel';
+import { preloadPolyEbike } from './render/polyProps';
 
 /** Touch UI + lower quality on coarse-pointer devices; `?touch=1|0` forces it. */
 function isTouchDevice(): boolean {
@@ -137,6 +140,16 @@ const env = new SceneEnv(container, city, {
 });
 
 let session: NanningSession | null = null;
+// Last frame's interpolated car pose, so the rider block — which runs before the
+// pose is computed — can put the avatar on the seat without reordering the
+// frame. One frame of lag is invisible and keeps the stream smooth.
+let carPoseRef: { x: number; z: number; heading: number; speed: number } | null = null;
+/** What the shared resolver is pointing at this frame, shared with the punch. */
+let currentTarget: Target | null = null;
+let targetMarker: TargetMarker | null = null;
+/** Short-lived label for whatever the last swing connected with. */
+let hitBanner = '';
+let hitBannerT = 0;
 
 if (streamedWorld) {
   // env.scene now exists; load the initial ring around spawn (fires the hooks).
@@ -149,10 +162,16 @@ if (streamedWorld) {
 }
 
 // Default is the lab-coat protagonist. `?skin=suit` keeps the v0.3 suit rig as an alternate.
-const suitSkin = urlParams.get('skin') === 'suit';
-const avatarRig = suitSkin ? null : buildCharacter(PROTAGONIST);
+// `?skin=suit` keeps the v0.3 box rig, `?skin=procedural` the old procedural
+// one; the default is the Kenney clip-driven character.
+const skinParam = urlParams.get('skin');
+const suitSkin = skinParam === 'suit';
+const proceduralSkin = skinParam === 'procedural';
+const clipRig: ClipCharacter | null =
+  suitSkin || proceduralSkin ? null : createClipCharacter(PROTAGONIST);
+const avatarRig = proceduralSkin ? buildCharacter(PROTAGONIST) : null;
 const suitRig: CharacterRig | null = suitSkin ? makeHumanoid(PLAYER_STYLE) : null;
-const avatar = suitSkin ? suitRig!.group : avatarRig!.group;
+const avatar = clipRig ? clipRig.group : (suitSkin ? suitRig!.group : avatarRig!.group);
 env.scene.add(avatar);
 // `?hero=1` is a portrait camera. A small fill keeps the coat and face readable
 // at night without changing the street's own lighting.
@@ -170,6 +189,19 @@ if (heroFill) env.scene.add(heroFill);
   get district() { return session?.district ?? null; },
   get shops() { return session?.shops ?? null; },
   get loop() { return loop; },
+  get avatar() { return clipRig ?? avatarRig ?? suitRig; },
+  // Screenshot hook: `?mixer=1.2` puts the animation at 1.2 s and holds it.
+  // Under swiftshader the page runs at ~4 fps, so the mixer only advances a
+  // fraction of a second in ten seconds of wall clock and every capture lands
+  // on the clip's first frame.
+  get mixerTime() { return Number(urlParams.get('mixer') ?? NaN); },
+  get interiors() { return interiors; },
+  // The street session, and the people on it. The crowd is the only population
+  // of pedestrians this street actually has, so anything that wants to know
+  // about "the people on the street" needs it.
+  get session() { return session ?? null; },
+  get crowd() { return session?.crowd ?? null; },
+  get vehicles() { return vehicles ?? null; },
 };
 
 // Sfx is constructed here so the street session can blip on a purchase. The
@@ -184,6 +216,9 @@ if (nanning) {
   // Interior orbit sits close to walls; the old 0.5 m near plane clips the doorway.
   env.camera.near = 0.12;
   env.camera.updateProjectionMatrix();
+  // Kenney food/market models for the prop buckets a box cannot fake. Swaps
+  // geometry on buckets that already exist, so the layouts stay authoritative.
+  void interiors.useKenneyKit().then((n) => n && console.info(`[nn] interior kit: ${n} buckets`));
 }
 if (nanning) {
   session = new NanningSession({
@@ -196,9 +231,38 @@ if (nanning) {
     onHeat: (amount) => {
       heat = Math.min(100, heat + amount);
     },
+    onEat: (heal) => {
+      if (heal <= 0) return;
+      const before = health;
+      health = Math.min(MAX_HEALTH, health + heal);
+      const got = Math.round(health - before);
+      if (got > 0) {
+        hitBanner = `食完返晒 ${got} 血`;
+        hitBannerT = 1.8;
+      }
+    },
     onPayout: (payout) => completeMission(payout),
     onBlip: () => sfx.footstep(),
   });
+  session.attachProps(interiors!);
+
+  // The street answers back. A hostile pedestrian connects, and it goes
+  // through the same health path a car impact takes: one bad brawl can end
+  // the night.
+  session.crowd.onSwing = (_x, _z, damage) => {
+    if (mode !== 'foot' || wasted || busted) return;
+    health = Math.max(0, health - damage);
+    hitBanner = '俾人揍咗一拳头';
+    hitBannerT = 1.2;
+    sfx.punch();
+    if (health <= 0) enterWasted();
+  };
+  // A brawl in public is a public event. One patrol car is enough to start.
+  session.crowd.onFightStart = () => {
+    heat = Math.min(100, heat + FIGHT_HEAT);
+    hitBanner = '有人帮手，快走';
+    hitBannerT = 1.8;
+  };
 }
 
 // Warm glow that rides the active actor so the night street reads up close.
@@ -231,9 +295,40 @@ const debris = new Debris(env.scene, world);
 // a follow-up (Phase C). The player car still spawns at the origin intersection.
 // On the food street the only cars are the background lanes past the barriers.
 // `?stream=1` keeps the upstream world with no ambient traffic (unchanged).
-const trafficCount = streaming ? 0 : nanning ? 8 : touch ? 24 : 40;
+// The Nanning street is 300 m of nine-metre carriageway. Eight cars meant one
+// every forty metres, which is not traffic. Twenty, weighted towards the two
+// lanes down 中山路, is a street with cars on it.
+const trafficCount = streaming ? 0 : nanning ? 20 : touch ? 24 : 40;
+// Poly Pizza scooter must be ready before Vehicles builds the player 电瓶车.
+await preloadPolyEbike();
 const vehicles = new Vehicles(env.scene, city, world, debris, trafficCount);
-const peds = new Pedestrians(env.scene, city, world, debris, streaming ? 0 : touch ? 28 : 60);
+// Nanning's Crowd already places Kenney Mini Characters on the carriageway.
+// Spawning the upstream capsule peds on top of that left blue/green box people
+// in every acceptance shot — keep them for `?stream=1` only.
+const peds = new Pedestrians(
+  env.scene,
+  city,
+  world,
+  debris,
+  streaming ? 0 : nanning ? 0 : touch ? 28 : 60,
+);
+// The street answers back. A hostile pedestrian connects, and it goes through
+// the same health path a car impact takes: one bad brawl can end the night.
+peds.onSwing = (_x, _z, damage) => {
+  if (mode !== 'foot' || wasted || busted) return;
+  health = Math.max(0, health - damage);
+  hitBanner = '俾人揍咗一拳头';
+  hitBannerT = 1.2;
+  sfx.punch();
+  if (health <= 0) enterWasted();
+};
+// A brawl in public is a public event. One patrol car is enough to start.
+peds.onFightStart = () => {
+  heat = Math.min(100, heat + FIGHT_HEAT);
+  hitBanner = '有人帮手，快走';
+  hitBannerT = 1.8;
+};
+
 const hud = new HUD(container, city, touch, streaming);
 
 let touchRoot: HTMLElement | undefined;
@@ -326,16 +421,45 @@ if (!HUD_ON) {
 }
 
 let mode: Mode = nanning ? 'foot' : 'driving';
+// Where a person stands on a street with traffic in it: the walking lane
+// down the middle of the carriageway, clear of the lanes the cars use.
+const KERB_X = 1.7;
+
 // The first car is spawned as the player's. On the food street you start on
 // foot beside it, so it has to be enterable (nearest() ignores playerIndex).
 if (mode === 'foot') vehicles.exit();
-player.x = city.center.x;
+// On the kerb, not in the road. The carriageway of 中山路 is nine metres wide
+// and there is traffic in it now; starting in the middle of it meant being
+// run over before the game had finished loading.
+player.x = nanning ? KERB_X : city.center.x;
 player.z = city.center.z;
 // Face south, down the street toward the night market. Forward is (cos h, -sin h).
 if (nanning) player.heading = -Math.PI / 2;
 follow.snapBehind(player.heading, player.x, player.z, player.y, nanning ? STREET_CAM : FOOT_CAM);
 
 const MAX_HEALTH = 100;
+// Seat height the rider sits at, in metres above the road. A car's bench and an
+// e-bike's saddle are close enough that one number reads correctly for both;
+// the alternative is plumbing a per-vehicle height through the pose for a
+// difference nobody can see at chase-camera distance.
+// The rider's origin is at the model's feet. The 'sit' clip in this model is
+// a sitting-on-the-ground pose — head down by the hips — so it cannot be a
+// car seat: the driver's head ended up at the car's belt line, buried in the
+// bodywork. The model also ships a 'drive' clip, which is the one for this.
+/**
+ * Where the rider sits, and how big they are in the seat.
+ *
+ * The protagonist is a chibi: a metre of head on a metre of body, 1.64 m all
+ * told. That does not go into a car — the cabin is 1.45 m tall, so a driver
+ * at full size has their head through the roof and their knees through the
+ * floor. That is the "sitting pose clips through the bodywork" the review
+ * kept catching, and it is a fact about the model, not about the pose.
+ *
+ * So a driver is scaled down to something a seat can hold, and dropped so
+ * the hips land on the cushion.
+ */
+const RIDER_SCALE = 0.42;
+const SEAT_Y = 0.64;
 const HIT_SPEED = 3; // m/s a car must exceed to injure a pedestrian
 const DAMAGE_PER_SPEED = 5; // health lost per m/s of impact
 const KNOCKBACK = 1.6;
@@ -349,10 +473,19 @@ let turnPrev = 0; // player's heading a frame ago, for the walk-cycle sidestep l
 let airTime = 0; // seconds since the jump started
 let punchTimer = 0; // counts down through the punch animation
 const PUNCH_TIME = 0.32;
+/** How much a swing takes off a breakable thing. Tuned so a table is four. */
+const PUNCH_DAMAGE = 1;
+/** Reach of an on-foot swing, shared by every verb. */
+const PUNCH_REACH = 2.6;
+/** How hard a carried person is thrown, m/s. */
+const THROW_POWER = 9;
+/** Talking is a little more forgiving than a punch — you are not aiming. */
+const TALK_REACH = 2.8;
 
 // Wanted system: "heat" rises with crimes and decays after a grace period;
 // it maps to 0–5 stars, and each star is one chasing police car.
 const CRIME_HEAT = 16; // heat added per pedestrian you personally run over
+const FIGHT_HEAT = 20; // heat added when a brawl starts (one patrol car)
 const HEAT_GRACE = 4; // seconds OUT OF POLICE SIGHT before heat starts to cool
 const HEAT_DECAY = 11; // heat lost per second once cooling
 let stars = 0;
@@ -389,8 +522,17 @@ function toggleVehicle(): void {
   } else {
     const i = vehicles.nearest(player.x, player.z, ENTER_DISTANCE);
     if (i >= 0) {
+      const role = vehicles.carStates()[i]?.role ?? 'ai';
       vehicles.enter(i);
       mode = 'driving';
+      // Taking somebody else's car is a crime. It was silently free here, so
+      // the street had no risk in it at all — the one thing GTA's traffic is
+      // for. A police car is worth two of an ordinary one.
+      if (role === 'ai' || role === 'parked') {
+        heat = Math.min(100, heat + CRIME_HEAT);
+      } else if (role === 'police') {
+        heat = Math.min(100, heat + CRIME_HEAT * 2);
+      }
       radio?.enterCar(i);
       radioCarIndex = i;
       radioPrimed = true;
@@ -470,10 +612,39 @@ function updateFoot(dt: number): void {
     },
     footWorld,
     dt,
-    { speedMul: 1, carry: 'none', satiety: session?.shops.wallet.satiety ?? 80 },
+    {
+      // Carrying someone makes you slow, and a punch impossible. Without a tax,
+      // picking people up is strictly better than talking to them and nobody
+      // would ever choose to talk.
+      speedMul: peds.carrying() || session?.crowd.carrying() ? 0.55 : 1,
+      carry: 'none',
+      satiety: session?.shops.wallet.satiety ?? 80,
+    },
   );
-  // Grab is wired (G / right click / Y) and intentionally does nothing until props exist.
-  controls.grabPressed();
+  // G grabs whatever the resolver is pointing at, and drops it again. The old
+  // line here read `controls.grabPressed();` and threw the answer away, so the
+  // key was live and did nothing at all — carrying and throwing have been
+  // unreachable since the key was first bound.
+  if (mode === 'foot' && controls.grabPressed()) {
+    const dirX = Math.cos(player.heading);
+    const dirZ = -Math.sin(player.heading);
+    const crowd = session?.crowd;
+    if (peds.carrying() || crowd?.carrying()) {
+      // Already holding someone: G lets go, J throws.
+      peds.release(0, dirX, dirZ);
+      crowd?.release(0, dirX, dirZ);
+      hitBanner = '放低咗';
+      hitBannerT = 1.2;
+    } else if (currentTarget?.kind === 'ped') {
+      // One verb, one owner: the target knows how to be grabbed, so the
+      // caller never has to know which population of people it reached.
+      const grabbed = currentTarget.grab?.() ?? peds.grab(player.x, player.z, dirX, dirZ, PUNCH_REACH);
+      if (grabbed) {
+        hitBanner = '捉住佢';
+        hitBannerT = 1.6;
+      }
+    }
+  }
 
   for (const ev of events) {
     if (ev.kind === 'fallDamage') {
@@ -495,6 +666,11 @@ function updateFoot(dt: number): void {
     const offStall = session.resolveStalls(player.x, player.z, FOOT_RADIUS);
     player.x = offStall.x;
     player.z = offStall.z;
+    // Intact railings at both ends of the street are solid; break a bay with a
+    // car first and the gap is walkable.
+    const offRail = session.resolveBarriers(player.x, player.z, FOOT_RADIUS);
+    player.x = offRail.x;
+    player.z = offRail.z;
     // Keep the slice on the street. The cross roads past the barriers are scenery.
     player.x = Math.max(-42, Math.min(42, player.x));
   }
@@ -521,7 +697,8 @@ function respawn(): void {
   sinceUnseen = 0;
   wantedCooling = false;
   mode = 'foot';
-  player.teleport(city.center.x, city.center.z + 6, nanning ? -Math.PI / 2 : 0);
+  // Back on the kerb for the same reason you start there.
+  player.teleport(nanning ? KERB_X : city.center.x, city.center.z + 6, nanning ? -Math.PI / 2 : 0);
   follow.snapBehind(player.heading, player.x, player.z, 0, STREET_CAM);
 }
 
@@ -562,11 +739,15 @@ function chaseTarget(): { x: number; z: number; vx: number; vz: number } {
  */
 function updateWanted(dt: number): void {
   const over = peds.runOverCount;
+  // The people on this street are the crowd, so they are the ones the traffic
+  // can run over — and running someone over is how a wanted level starts.
+  const crowdOver = session?.crowd.runOvers ?? 0;
+  const total = over + crowdOver;
   const t = chaseTarget();
   const seen = stars > 0 && vehicles.anyPoliceSeesTarget(t.x, t.z, city.colliders);
-  if (over > prevRunOver) {
+  if (total > prevRunOver) {
     sfx.gib();
-    heat = Math.min(100, heat + (over - prevRunOver) * CRIME_HEAT);
+    heat = Math.min(100, heat + (total - prevRunOver) * CRIME_HEAT);
     sinceUnseen = 0;
   } else if (seen) {
     sinceUnseen = 0; // they have eyes on you — wanted holds
@@ -574,13 +755,29 @@ function updateWanted(dt: number): void {
     sinceUnseen += dt;
     if (sinceUnseen > HEAT_GRACE) heat = Math.max(0, heat - HEAT_DECAY * dt);
   }
-  prevRunOver = over;
+  prevRunOver = total;
   wantedCooling = stars > 0 && !seen && sinceUnseen > HEAT_GRACE;
   stars = starsFromHeat(heat);
   vehicles.setWanted(stars, t, city);
 }
 
 /** While on foot, take damage from cars that hit us; trigger WASTED at zero. */
+/**
+ * Cars run people over. The people on this street are the crowd, so this is
+ * where a hit-and-run gets noticed — and where the wanted level comes from.
+ * Without it, driving over somebody on 中山路 did nothing at all.
+ */
+function checkCrowdRunOver(): void {
+  const crowd = session?.crowd;
+  if (!crowd) return;
+  for (const t of crowd.talkers) {
+    if (t.combat === 'carried' || t.combat === 'down') continue;
+    const hit = vehicles.pedestrianImpact(t.x, t.z, true, false);
+    if (!hit || hit.speed <= HIT_SPEED) continue;
+    crowd.runOver(t, hit.speed, hit.nx, hit.nz);
+  }
+}
+
 function checkPedestrianDamage(): void {
   // Exclude police: a cop catching you on foot triggers BUSTED (arrest), it
   // doesn't run you over. Ordinary traffic can still flatten you.
@@ -626,7 +823,7 @@ function update(dt: number): void {
     else bustedTimer -= dt;
     vehicles.update(city, dt, null, null);
     flushCarWrecks();
-    peds.update(city, dt, runOverQuery, null, resolveCars);
+    peds.update(city, dt, runOverQuery, null, resolveCars, null);
     debris.update(dt); // shared pool, advanced once per frame
     if ((wasted && wastedTimer <= 0) || (busted && bustedTimer <= 0)) respawn();
     controls.endFrame();
@@ -634,11 +831,26 @@ function update(dt: number): void {
   }
 
   // E opens or closes a shop. F is the only key that enters or leaves a car.
-  if (mode === 'foot' && controls.interactPressed()) session?.interact(true);
+  if (mode === 'foot' && controls.interactPressed()) {
+    // A person in the way is a person you can talk to, and that outranks a shop
+    // only when the shop is not the thing you are standing at.
+    const dirX = Math.cos(player.heading);
+    const dirZ = -Math.sin(player.heading);
+    if (!session?.shops.focused) {
+      const said = peds.talk(player.x, player.z, dirX, dirZ, TALK_REACH);
+      if (said) {
+        hitBanner = said;
+        hitBannerT = 3.0;
+      } else session?.interact(true);
+    } else session?.interact(true);
+  }
   if (controls.mountPressed()) toggleVehicle();
 
   updateWanted(dt);
   const chase = stars > 0 ? chaseTarget() : null;
+
+  // A car runs people over whether you are driving it or watching it happen.
+  checkCrowdRunOver();
 
   if (mode === 'driving') {
     if (controls.resetPressed()) vehicles.resetPlayer(city);
@@ -655,9 +867,33 @@ function update(dt: number): void {
     if (controls.attackPressed()) {
       const dirX = Math.cos(player.heading);
       const dirZ = -Math.sin(player.heading);
+      // Both hands full: a swing becomes a throw.
+      if (peds.carrying() || session?.crowd.carrying()) {
+        peds.release(THROW_POWER, dirX, dirZ);
+        session?.crowd.release(THROW_POWER, dirX, dirZ);
+        hitBanner = '掷出去';
+        hitBannerT = 1.2;
+        return;
+      }
       punchTimer = PUNCH_TIME;
-      const hitShop = session?.punch(player.x, player.z, dirX, dirZ) ?? false;
-      if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ);
+      // One verb, one resolver. The punch asks what is in front of the player
+      // and acts on the answer, instead of shops and pedestrians each running
+      // their own reach-and-facing test and occasionally disagreeing.
+      const t = currentTarget;
+      if (t) {
+        const res = session?.strikeTarget(t, PUNCH_DAMAGE);
+        if (res) {
+          sfx.punch();
+          if (res.broke) sfx.crash();
+          hitBanner = `${res.label}${res.broke ? ' 砸烂咗' : ' 挨一击'}`;
+          hitBannerT = 1.6;
+        } else {
+          peds.punch(player.x, player.z, dirX, dirZ, PUNCH_REACH, PUNCH_DAMAGE);
+        }
+      } else {
+        const hitShop = session?.punch(player.x, player.z, dirX, dirZ) ?? false;
+        if (!hitShop) peds.punch(player.x, player.z, dirX, dirZ, PUNCH_REACH, PUNCH_DAMAGE);
+      }
     }
 
     // Footsteps cadence with travel distance (faster when sprinting).
@@ -680,7 +916,14 @@ function update(dt: number): void {
   updateBusted(dt);
   // Pedestrians fear the CAR only (not the player on foot): proximity, or a fast
   // car on a vector to hit them. Threat carries velocity for the vector trigger.
-  peds.update(city, dt, runOverQuery, mode === 'driving' ? chaseTarget() : null, resolveCars);
+  peds.update(
+    city,
+    dt,
+    runOverQuery,
+    mode === 'driving' ? chaseTarget() : null,
+    resolveCars,
+    mode === 'foot' ? { x: player.x, z: player.z } : null,
+  );
   debris.update(dt); // shared pool, advanced once per frame
   controls.endFrame();
 }
@@ -720,7 +963,7 @@ function render(alpha: number, frameDt: number): void {
   // Interpolate every moving thing between its previous and current physics
   // step so motion stays smooth regardless of how steps line up with frames.
   vehicles.render(alpha);
-  peds.render(alpha);
+  peds.render(alpha, peds.holdPose({ x: player.x, z: player.z, heading: player.heading }));
   debris.render(alpha); // shared pool, drawn once per frame
 
   const ax = lerp(player.px, player.x, alpha);
@@ -728,16 +971,83 @@ function render(alpha: number, frameDt: number): void {
   const az = lerp(player.pz, player.z, alpha);
   const ah = angleLerp(player.ph, player.heading, alpha);
   // Feet height already includes the arcade and interior floors.
-  avatar.position.set(ax, ay, az);
-  avatar.rotation.y = ah;
-  avatar.visible = mode === 'foot';
-  if (avatarRig) {
-    avatarRig.update(mode === 'foot' ? player.speed : 0, frameDt, {
-      state: player.state === 'air' ? 'air' : player.state,
-      stateTime: player.sim.stateTime,
-      vy: player.vy,
+  // Resolve what the player is pointing at, once per frame, and show it. The
+  // punch reads the same answer later in the frame, so aiming and swinging can
+  // never disagree about what "in front of you" means.
+  if (!targetMarker) targetMarker = new TargetMarker(env.scene);
+  if (mode === 'foot' && nanning && session) {
+    currentTarget = pickTarget(session.targets(), {
+      x: player.x, z: player.z,
+      dirX: Math.cos(player.heading), dirZ: -Math.sin(player.heading),
+      reach: 2.6,
     });
-    const head = avatarRig.limbs.head;
+  } else {
+    currentTarget = null;
+  }
+  targetMarker.update(currentTarget, frameDt);
+  if (hitBannerT > 0) {
+    hitBannerT -= frameDt;
+    if (hitBannerT <= 0) hitBanner = '';
+  }
+  hud.setHitBanner(hitBanner);
+
+  // Riding used to hide the avatar outright (`visible = mode === 'foot'`), which
+  // read as driving an empty vehicle. The rider belongs on the seat: parked on
+  // top of the car, turned with it, sitting.
+  const ridingPose = mode === 'driving' ? carPoseRef : null;
+  if (ridingPose) {
+    // A seat sits behind the middle of the car, and the rider faces forward.
+    const fx = Math.cos(ridingPose.heading);
+    const fz = -Math.sin(ridingPose.heading);
+    // The seat is behind the middle of the car, and the cabin's centre is
+    // further back still: at 0.35 m the rider's legs reached forward over
+    // the bonnet instead of under the dashboard.
+    //
+    // And a driver sits on one side, not on the centre line. China drives on
+    // the left, so the wheel and the seat are on the car's left; on the
+    // centreline the rider was half inside the cabin wall and you could not
+    // see who was driving.
+    const rx = -fz;
+    const rz = fx;
+    avatar.position.set(
+      ridingPose.x - fx * 0.62 - rx * 0.3,
+      SEAT_Y,
+      ridingPose.z - fz * 0.62 - rz * 0.3,
+    );
+    avatar.rotation.y = ridingPose.heading;
+    avatar.scale.setScalar(RIDER_SCALE);
+  } else {
+    avatar.position.set(ax, ay, az);
+    avatar.rotation.y = ah;
+    avatar.scale.setScalar(1);
+  }
+  // Acceptance stills set __hideAvatar so the hero does not block the room.
+  avatar.visible = !(globalThis as unknown as { __hideAvatar?: boolean }).__hideAvatar;
+  if (clipRig || avatarRig) {
+    const liveRig = clipRig ?? avatarRig!;
+    if (ridingPose) {
+      // The procedural fallback rig has no clip library, so it has nothing to
+      // drive with — only the Kenney clip character does.
+      //
+      // 'drive' in this model is a leaning-forward run, not a seat. The model
+      // also ships 'wheelchair-sit', which is the one with the legs forward
+      // and the hips in a chair — a car seat is a chair.
+      clipRig?.play('wheelchair-sit', 0.25);
+      // And the mixer has to be advanced: the rig is not updated while the
+      // player is driving, so the pose was chosen and then never played.
+      clipRig?.tick(frameDt);
+    } else {
+      liveRig.update(player.speed, frameDt, {
+        state: player.state === 'air' ? 'air' : player.state,
+        stateTime: player.sim.stateTime,
+        vy: player.vy,
+      });
+    }
+    // `?mixer=<sec>` freezes the Kenney clip at an absolute time so
+    // swiftshader screenshots are not stuck on frame 0 of the cycle.
+    const mt = Number(urlParams.get('mixer') ?? NaN);
+    if (Number.isFinite(mt) && clipRig) clipRig.setMixerTime(mt, true);
+    const head = liveRig.limbs.head;
     if (head) head.visible = !(mode === 'foot' && follow.eyeDistance < 0.85);
   } else if (suitRig) {
     const onFoot = mode === 'foot';
@@ -758,6 +1068,7 @@ function render(alpha: number, frameDt: number): void {
   }
 
   const carPose = vehicles.playerPoseInterp(alpha);
+  carPoseRef = carPose;
   const active =
     mode === 'driving' && carPose ? carPose : { x: ax, z: az, heading: ah, speed: player.speed };
   env.follow(active.x, active.z); // streamed ground/shadow/sun ride the player (no-op when finite)
@@ -773,6 +1084,14 @@ function render(alpha: number, frameDt: number): void {
     const v = vehicles.playerVelocity();
     camVx = v.vx;
     camVz = v.vz;
+    // Ramming the end-of-street railings. The car is the only thing on the map
+    // heavy enough to take them out, so this is also the only way either end of
+    // 中山路 is ever open.
+    const spd = Math.hypot(v.vx, v.vz);
+    if (spd > 0.5) {
+      const broke = session?.ramBarriers(carPose.x, carPose.z, v.vx / spd, v.vz / spd, spd) ?? 0;
+      if (broke) sfx.crash();
+    }
   } else {
     camVx = Math.cos(ah) * player.speed;
     camVz = -Math.sin(ah) * player.speed;
@@ -817,7 +1136,7 @@ function render(alpha: number, frameDt: number): void {
   // The health bar reads car integrity while driving, avatar health on foot.
   const shownHealth = mode === 'driving' ? vehicles.playerCarHealth() : health;
   if (HUD_ON) hud.update(speedMph, mode, active, vehicles.positions(), shownHealth, wasted);
-  if (HUD_ON) hud.setRunOverCount(peds.runOverCount);
+  if (HUD_ON) hud.setRunOverCount(peds.runOverCount + (session?.crowd.runOvers ?? 0));
   if (HUD_ON) hud.setCarName(mode === 'driving' ? vehicles.playerCarName() : null);
   // Radio readout is a dashboard thing — only show it while driving (the audio
   // itself still fades out with distance as you walk away).
@@ -827,7 +1146,10 @@ function render(alpha: number, frameDt: number): void {
   if (HUD_ON) hud.setBusted(busted);
 
   if (session) {
-    session.tick(frameDt, timeOfDay, player.x, player.z, mode === 'foot', heat, follow.yaw, env.scene, daylightFactor(timeOfDay));
+    session.tick(
+      frameDt, timeOfDay, player.x, player.z, mode === 'foot', heat,
+      follow.yaw, env.scene, daylightFactor(timeOfDay), player.heading,
+    );
     session.render(env.camera);
     const nearCar = mode === 'foot' && vehicles.nearest(player.x, player.z, ENTER_DISTANCE) >= 0;
     session.hud.setMountHint(nearCar);
@@ -857,14 +1179,22 @@ function render(alpha: number, frameDt: number): void {
   assets.setDaylight(daylight); // window/lamp lights off + glassy by day
   session?.applyDaylight(daylight);
   env.render();
+  // Measure the gap between draws, not the time spent inside render(). WebGL is
+  // asynchronous — the CPU hands the frame off and returns long before the GPU
+  // is done — so timing the call itself only ever sees submission cost and
+  // happily concludes that a GPU-bound scene is running fine. The interval
+  // between frames is throttled by the compositor and does include the stall.
+  const now = performance.now();
+  const sinceDraw = (now - lastDrawAt) / 1000;
+  lastDrawAt = now;
+  if (env.adaptQuality(sinceDraw, adaptiveCap)) onQualityChanged?.();
 
   // Perf telemetry (watched in the smoke run; see performance-vigilance memory).
   if (frameDt > 0) perf.frameMs = perf.frameMs === 0 ? frameDt * 1000 : perf.frameMs * 0.9 + frameDt * 1000 * 0.1;
-  const info = env.renderer.info;
-  perf.drawCalls = info.render.calls;
-  perf.triangles = info.render.triangles;
-  perf.geometries = info.memory.geometries;
-  perf.textures = info.memory.textures;
+  perf.drawCalls = env.frameStats.calls;
+  perf.triangles = env.frameStats.triangles;
+  perf.geometries = env.renderer.info.memory.geometries;
+  perf.textures = env.renderer.info.memory.textures;
 }
 
 interface Perf {
@@ -894,12 +1224,18 @@ declare global {
       readonly radioReady: boolean;
       readonly carModel: string | null;
       readonly perf: Perf;
+      readonly renderer: THREE.WebGLRenderer;
+      readonly scene: THREE.Scene;
       vehicles: Vehicles;
       player: Player;
       peds: Pedestrians;
       city: typeof city;
       teleport(x: number, z: number, heading?: number): void;
+      freeze(on: boolean): void;
       interiorProps(): { prop: string; shopId: string; x: number; z: number; w: number; d: number; h: number }[];
+      /** Where the rider's body actually is, in world metres. A limb through
+       *  the floor of a car is a number, not an opinion. */
+      riderBox(): { min: [number, number, number]; max: [number, number, number] } | null;
       readonly interior: boolean;
       readonly camDist: number;
       readonly camBlocked: boolean;
@@ -944,6 +1280,18 @@ window.__game = {
   get paused() {
     return loop.isPaused();
   },
+  /**
+   * Freeze the simulation without opening the pause menu.
+   *
+   * `setPaused` is the player's pause and it brings up the menu with it, which
+   * is exactly what a capture rig does not want — the menu would be in the
+   * shot. This stops the world where it is and leaves the screen alone, so a
+   * still can be composed of something the physics would not otherwise allow,
+   * like a character held in mid-air.
+   */
+  freeze(on: boolean) {
+    loop.setPaused(on);
+  },
   get radioReady() {
     return radio !== null; // manifest fetched + tuner built
   },
@@ -952,6 +1300,14 @@ window.__game = {
   },
   get perf() {
     return perf;
+  },
+  /** The renderer, for profiling rigs that need to toggle passes at runtime. */
+  get renderer() {
+    return env.renderer;
+  },
+  /** The scene, for the same reason. */
+  get scene() {
+    return env.scene;
   },
   vehicles,
   player,
@@ -963,6 +1319,26 @@ window.__game = {
   },
   interiorProps() {
     return interiors?.props() ?? [];
+  },
+  riderBox() {
+    const root = clipRig?.group;
+    if (!root) return null;
+    // The box of a skinned mesh is its bind pose — arms out, and in this
+    // model's case nonsense tall — so the head's own world position is the
+    // honest number: it is what actually comes through the roof.
+    let headY: number | null = null;
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      if (!/head/i.test(o.name)) return;
+      const y = o.getWorldPosition(new THREE.Vector3()).y;
+      headY = headY === null ? y : Math.max(headY, y);
+    });
+    const b = new THREE.Box3().setFromObject(root);
+    return {
+      min: [+b.min.x.toFixed(3), +b.min.y.toFixed(3), +b.min.z.toFixed(3)],
+      max: [+b.max.x.toFixed(3), +b.max.y.toFixed(3), +b.max.z.toFixed(3)],
+      headY: headY === null ? null : +(headY as number).toFixed(3),
+    };
   },
   get interior() {
     return insideShop;
@@ -987,11 +1363,23 @@ function completeMission(p: { title: string; reward: number; line: string }): vo
 
 const loop = new GameLoop(update, render);
 
+/**
+ * Resolution cap the adaptive controller scales down from. Kept separate from
+ * `applyOptions` so a quality change from the menu resets the ladder to the top
+ * instead of leaving it wherever the last auto-adjustment left it.
+ */
+let adaptiveCap = 2;
+/** Timestamp of the previous draw, for the adaptive quality controller. */
+let lastDrawAt = performance.now();
+/** Set by the smoke test so a quality step can be reported. */
+let onQualityChanged: (() => void) | null = null;
+
 /** Push the current options everywhere they take live effect. */
 function applyOptions(opts: GameOptions): void {
   sfx.setMasterVolume(opts.masterVolume);
   radio?.setMasterVolume(opts.masterVolume);
-  env.renderer.setPixelRatio(Math.min(window.devicePixelRatio, qualityPixelRatio(opts.quality)));
+  adaptiveCap = qualityPixelRatio(opts.quality);
+  env.renderer.setPixelRatio(Math.min(window.devicePixelRatio, adaptiveCap));
   dayLength = opts.dayLength;
 }
 applyOptions(options);
@@ -1026,7 +1414,17 @@ function setPaused(p: boolean): void {
 addEventListener('keydown', (e) => {
   // Pointer lock eats the first Escape (the browser unlocks). Don't also pause.
   if (e.code === 'Escape' && document.pointerLockElement) return;
-  if (e.code === 'Escape' && !document.getElementById('splash')) setPaused(!menu.isOpen());
+  if (e.code === 'Escape') {
+    if (document.getElementById('splash')) return;
+    // Escape belongs to whatever is on top. The shop panel is a modal: close it
+    // first, and only fall through to the pause menu once it is gone. Opening
+    // the pause menu under an open shop panel is what left the player stuck.
+    if (session?.hud.isPanelOpen) {
+      session.hud.closePanel();
+      return;
+    }
+    setPaused(!menu.isOpen());
+  }
 });
 
 // Click the view to orbit. Touch uses the right-half drag instead.

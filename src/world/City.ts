@@ -19,6 +19,21 @@ export interface Lane {
   axis: 'x' | 'z'; // the axis the lane runs along
   fixed: number; // the other coordinate (lane center)
   dir: 1 | -1; // travel direction along `axis`
+  /**
+   * A bounded stretch of road: the car wraps back to the far end when it
+   * reaches the end, instead of running on past the last building.
+   */
+  span?: [number, number];
+  /**
+   * How wide the car watches for people in its path. A narrow old street
+   * should not brake for everyone standing on the kerb — only for someone
+   * actually stepping into the road.
+   */
+  watch?: number;
+  /** Cruise speed for this lane, m/s. */
+  cruise?: number;
+  /** How many cars this lane asks for, relative to the others. */
+  weight?: number;
 }
 
 /** A streetlight position (lamp sits on a pole at this ground point). */
