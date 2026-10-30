@@ -7,6 +7,7 @@ import {
   pointInsideShop,
   seatsReachable,
   templateForKind,
+  WARM_SHOP_IDS,
   type ShopShell,
 } from './interiors';
 import type { ShopKind } from './data';
@@ -78,6 +79,49 @@ describe('interiors', () => {
       const shell = all.find((s) => s.kind === kind)!;
       const layout = buildInterior(shell);
       expect(layout.props.some((p) => p.prop === 'menu'), kind).toBe(true);
+    }
+  });
+
+  it('stands the warm-shop stew pot on the counter, not hovering beside it', () => {
+    for (const shell of all.filter((s) => WARM_SHOP_IDS.has(s.defId))) {
+      const layout = buildInterior(shell);
+      const pot = layout.props.find((p) => p.prop === 'pot');
+      if (!pot) continue; // only the warm 粉饺 shop lays a stew pot on the counter
+      const counter = layout.props.find((p) => p.prop === 'counter')!;
+      expect(counter, shell.id).toBeDefined();
+      // The pot rim rests on the counter top (touching planes, no volume).
+      expect(pot.y).toBeCloseTo((counter.y ?? 0) + counter.h, 5);
+      // The whole pot footprint is over the counter run — floating mid-air
+      // would mean it renders hovering over the walkway.
+      expect(
+        Math.abs(pot.x - counter.x),
+        `${shell.id} pot u-offset ${Math.abs(pot.x - counter.x)}`,
+      ).toBeLessThanOrEqual(counter.w / 2 - pot.w / 2 + 1e-6);
+      expect(
+        Math.abs(pot.z - counter.z),
+        `${shell.id} pot v-offset ${Math.abs(pot.z - counter.z)}`,
+      ).toBeLessThanOrEqual(counter.d / 2 - pot.d / 2 + 1e-6);
+    }
+  });
+
+  it('keeps the warm milk-tea extra table clear of the seating row', () => {
+    for (const shell of all.filter((s) => WARM_SHOP_IDS.has(s.defId) && s.kind === 'tea')) {
+      const layout = buildInterior(shell);
+      // Three high tables: the template's two plus the warm extra, none of
+      // them silently dropped into the aisle gap.
+      expect(
+        layout.props.filter((p) => p.prop === 'table-high').length,
+        shell.id,
+      ).toBe(3);
+      // Every high stool sits clear of every high table (0.35 + 0.16 sides).
+      for (const stool of layout.props.filter((p) => p.prop === 'stool-high')) {
+        const near = Math.min(
+          ...layout.props
+            .filter((p) => p.prop === 'table-high')
+            .map((t) => Math.hypot(t.x - stool.x, t.z - stool.z)),
+        );
+        expect(near, `${shell.id} stool at (${stool.x.toFixed(2)}, ${stool.z.toFixed(2)})`).toBeGreaterThanOrEqual(0.51);
+      }
     }
   });
 });

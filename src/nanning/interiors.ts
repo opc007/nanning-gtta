@@ -288,7 +288,13 @@ function addWarmExtras(list: LocalProp[], template: InteriorTemplate, depth: num
     // put it on the floor in the middle of the room — the acceptance shot read
     // as a pan lying in the walkway rather than a pan on the stove.
     addProp(list, 'steamer', back, counterW * 0.45 + 0.95);
-    addProp(list, 'pot', back - counterW * 0.2, -0.4, false, {
+    // The counter here is 0.65 m thick (w = 0.65 → half 0.325), so any u
+    // offset beyond ±0.065 puts the pot's rim off the counter run; the old
+    // back - counterW * 0.2 pushed it up to 0.64 m in front of the counter's
+    // face at counter-top height — a wok hovering over the walkway, with a
+    // floating cam-blocking collider under it. On the counter line, at the
+    // v = -0.4 end away from the two steamer stacks, it stands on the run.
+    addProp(list, 'pot', back, -0.4, false, {
       y: 0.15 + 0.95, // counter top
     });
     addProp(list, 'table-square', 4.35, -side * 0.6);
@@ -298,9 +304,17 @@ function addWarmExtras(list: LocalProp[], template: InteriorTemplate, depth: num
     stoolsAround(list, 5.6, -side * 0.3, -1, 0.525);
     addProp(list, 'lantern', 4.9, 0, false, hang);
   } else if (template === 'milktea') {
-    addProp(list, 'table-high', 3.4, side * 0.55);
-    addProp(list, 'stool-high', 3.4, side * 0.55 - 0.55, true);
-    addProp(list, 'stool-high', 3.4 + 0.5, side * 0.55, true);
+    // The extra table used to sit at (3.4, side * 0.55) — straight into the
+    // slot of table A's far stool, which stands at (2.5 + 0.62, side * 0.55).
+    // Their volumes overlap (0.23 m in u, both full-height), so the overlap
+    // filter silently dropped this table and left its two stools standing in
+    // the aisle with nothing to sit at. Shift it a clear v out of the row, far
+    // enough that its own stools clear the first table too, and use the same
+    // 0.62 offsets the template comment above mandates.
+    const vW = side * 0.55 + 1.2;
+    addProp(list, 'table-high', 3.4, vW);
+    addProp(list, 'stool-high', 3.4, vW - 0.62, true);
+    addProp(list, 'stool-high', 3.4 + 0.62, vW, true);
   }
 }
 
