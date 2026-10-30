@@ -36,7 +36,7 @@ function makeBody(color: number, shapeId: string) {
 
 type Role = 'ai' | 'parked' | 'police';
 
-interface Car {
+export interface Car {
   x: number;
   z: number;
   heading: number;
@@ -96,8 +96,13 @@ const CAR_HALF_WID = 0.92;
  * clear with their centres 2.4 m apart — which is the length of one car. A
  * green one drove straight into a brown one. Boxes, each in its own frame,
  * do not have that problem.
+ *
+ * The returned contact normal points **from b toward a** (same convention as
+ * `circleOverlap`), so `collide()` can push a along +n and b along -n, and so
+ * `vn = (va − vb)·n < 0` means "approaching" for the impulse.
+ * Exported for the unit test — the sign convention is the whole bug.
  */
-function obbOverlap(a: Car, b: Car): { nx: number; nz: number; depth: number } | null {
+export function obbOverlap(a: Car, b: Car): { nx: number; nz: number; depth: number } | null {
   const dx = b.x - a.x;
   const dz = b.z - a.z;
   const axes: [number, number][] = [
@@ -118,7 +123,15 @@ function obbOverlap(a: Car, b: Car): { nx: number; nz: number; depth: number } |
     if (overlap <= 0) return null; // a separating axis: they are clear
     if (overlap < minDepth) {
       minDepth = overlap;
-      const s = dist < 0 ? -1 : 1;
+      // Normal points from b toward a (matching circleOverlap and collide()'s
+      // `a += n·depth`, `b -= n·depth`). It used to be u·sign(dist), which
+      // points a toward b: the "separation" then shoved the pair INTO each
+      // other (a 1.5 m lateral overlap closed to 1.16 m instead of opening to
+      // 1.84 m), and the impulse — whose vn sign also assumes n = b→a —
+      // yanked separating cars back together while ignoring real approaches.
+      // Cars at intersections ground through each other, and the pair kept
+      // driving wherever the squeeze pointed — through shopfronts.
+      const s = dist < 0 ? 1 : -1;
       nx = ux * s;
       nz = uz * s;
     }
