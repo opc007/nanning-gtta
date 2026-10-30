@@ -22,7 +22,7 @@
 | 构建 | Vite 5 |
 | 测试 | Vitest（164 个单测） |
 | 渲染自测 | Playwright + headless Chromium（swiftshader） |
-| 美术 | 100% 程序化生成，**没有任何外部模型 / 贴图 / 音频文件** |
+| 美术 | 100% 程序化生成，**仅使用 Kenney CC0 资源管线中的模型** |
 
 **依赖只有 4 个**：`three`、`simplex-noise`、`lucide`、`vite|typescript|vitest|playwright`。
 不要引入美术资源管线（GLTFLoader、贴图压缩等）——这是刻意的设计：整个游戏没有二进制资源，

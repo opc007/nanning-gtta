@@ -101,6 +101,37 @@ describe('中山路 layout', () => {
     expect(Math.hypot(blocked.x - backX, blocked.z - shop.z)).toBeGreaterThan(0.15);
   });
 
+  it('puts the column colliders on the same bays as the rendered colonnade', () => {
+    // `buildColonnade` divides each run into floor(len / 4.4) bays and puts a
+    // column at both ends, so the real pitch is len / bays. The colliders used
+    // to step by a fixed 4.4 m and drifted up to half a bay from the visible
+    // pillars — the player walked through one column and hit empty air at the
+    // next. Recompute the rendered positions here and require an exact match.
+    const runs: { side: -1 | 1; z0: number; z1: number }[] = [
+      { side: 1, z0: STREET_Z0 + 1.2, z1: STREET_Z1 - 0.6 },
+      { side: -1, z0: STREET_Z0 + 1.2, z1: -ALLEY_WIDTH / 2 - 0.5 },
+      { side: -1, z0: ALLEY_WIDTH / 2 + 0.5, z1: STREET_Z1 - 0.6 },
+    ];
+    const columns = city.colliders.filter((b) => {
+      const w = b.maxX - b.minX;
+      const d = b.maxZ - b.minZ;
+      const cx = (b.minX + b.maxX) / 2;
+      return Math.abs(Math.abs(cx) - STREET_HALF) < 0.2 && w < 0.5 && d < 0.5;
+    });
+    for (const run of runs) {
+      const len = run.z1 - run.z0;
+      const bays = Math.max(2, Math.floor(len / 4.4));
+      const expected = Array.from({ length: bays + 1 }, (_, i) => run.z0 + (i / bays) * len);
+      const actual = columns
+        .filter((b) => Math.sign((b.minX + b.maxX) / 2) === run.side)
+        .map((b) => (b.minZ + b.maxZ) / 2)
+        .filter((z) => z >= run.z0 - 1e-6 && z <= run.z1 + 1e-6)
+        .sort((a, b) => a - b);
+      expect(actual).toHaveLength(expected.length);
+      for (let i = 0; i < expected.length; i++) expect(actual[i]).toBeCloseTo(expected[i], 6);
+    }
+  });
+
   it('runs the traffic down the carriageway, and keeps it off the arcade', () => {
     // This used to say the street had no traffic at all: 中山路 was a
     // pedestrian street, and every car in the game was parked on a back road

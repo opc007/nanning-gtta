@@ -83,6 +83,38 @@ const SECTIONS: { id: StreetSection; z0: number; z1: number }[] = [
   { id: 'south', z0: SOUTH_Z0, z1: SOUTH_Z1 },
 ];
 
+/**
+ * The colonnade runs, matching `scenery.mountKenneyArcade`. The west row is
+ * split by the alley mouth.
+ */
+export const COLONNADE_SPACING = 4.4;
+export const COLONNADE_RUNS: readonly { side: -1 | 1; z0: number; z1: number }[] = [
+  { side: 1, z0: STREET_Z0 + 1.2, z1: STREET_Z1 - 0.6 },
+  { side: -1, z0: STREET_Z0 + 1.2, z1: -ALLEY_WIDTH / 2 - 0.5 },
+  { side: -1, z0: ALLEY_WIDTH / 2 + 0.5, z1: STREET_Z1 - 0.6 },
+];
+
+/**
+ * Column centres for one run, in the order `buildColonnade` places them. The
+ * mesh divides a run into `floor(len / spacing)` bays and puts a column at
+ * both ends, so the real pitch is `len / bays` — not the nominal 4.4 m.
+ * Alternate columns are nudged 0.075 m across the run. Collision has to use
+ * these exact positions: a fixed 4.4 m step drifts up to half a bay from the
+ * visible columns, so the player walks through a pillar and then stops at
+ * empty air.
+ */
+export function colonnadeColumns(run: { side: -1 | 1; z0: number; z1: number }): { x: number; z: number }[] {
+  const len = run.z1 - run.z0;
+  const bays = Math.max(2, Math.floor(len / COLONNADE_SPACING));
+  const out: { x: number; z: number }[] = [];
+  for (let i = 0; i <= bays; i++) {
+    const z = run.z0 + (i / bays) * len;
+    const x = run.side * STREET_HALF + run.side * (i % 2 === 0 ? -0.075 : 0.075);
+    out.push({ x, z });
+  }
+  return out;
+}
+
 export type BuildingKind = 'modern' | 'arcade' | 'factory' | 'block' | 'shophouse' | 'landmark';
 
 export interface NanningBuilding extends Building {
@@ -380,11 +412,12 @@ export function generateNanningCity(seed = 1945): NanningCity {
   pushArcade(-1, STREET_Z0, -ALLEY_WIDTH / 2);
   pushArcade(-1, ALLEY_WIDTH / 2, STREET_Z1);
 
-  // Columns on the carriageway edge of the arcade. Same spacing as the scenery.
-  for (let z = STREET_Z0 + 1.2; z < STREET_Z1 - 0.6; z += 4.4) {
-    for (const side of [-1, 1] as const) {
-      if (side < 0 && Math.abs(z) < ALLEY_WIDTH / 2 + 0.4) continue;
-      addSolid(rect(side * STREET_HALF, z, 0.32, 0.32), 3.15);
+  // Columns on the carriageway edge of the arcade. Positions come from the
+  // same bay maths as the rendered colonnade, so the colliders sit under the
+  // pillars the player can see.
+  for (const run of COLONNADE_RUNS) {
+    for (const { x, z } of colonnadeColumns(run)) {
+      addSolid(rect(x, z, 0.34, 0.34), 3.15);
     }
   }
 
